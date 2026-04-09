@@ -7,10 +7,13 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
+#[cfg(windows)]
+mod windows_find;
+
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
-const BATCH_SIZE: usize = 512;
-const BATCH_INTERVAL: Duration = Duration::from_millis(60);
+pub(super) const ENTRY_BATCH_SIZE: usize = 32_768;
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
@@ -136,6 +139,15 @@ pub fn spawn_scan(request: ScanRequest) -> ScanHandle {
 }
 
 fn run_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled: Arc<AtomicBool>) {
+    #[cfg(windows)]
+    if windows_find::try_run_scan(&request, &sender, &cancelled) {
+        return;
+    }
+
+    run_standard_scan(request, sender, cancelled);
+}
+
+fn run_standard_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled: Arc<AtomicBool>) {
     let _ = sender.send(ScanEvent::Started {
         request: request.clone(),
     });
@@ -146,7 +158,7 @@ fn run_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled: Arc<Atom
         directories_discovered: 1,
         ..Default::default()
     };
-    let mut pending_entries = Vec::with_capacity(BATCH_SIZE);
+    let mut pending_entries = Vec::with_capacity(ENTRY_BATCH_SIZE);
     let mut warnings = Vec::new();
     let mut last_flush = Instant::now();
 
@@ -293,10 +305,34 @@ fn maybe_flush(
     warnings: &mut Vec<String>,
     last_flush: &mut Instant,
 ) {
-    if pending_entries.len() >= BATCH_SIZE || last_flush.elapsed() >= BATCH_INTERVAL {
+    if pending_entries.len() >= ENTRY_BATCH_SIZE {
         flush_batch(sender, request, pending_entries, progress, warnings);
         *last_flush = Instant::now();
+    } else if last_flush.elapsed() >= PROGRESS_INTERVAL {
+        emit_progress_batch(sender, request, progress, warnings);
+        *last_flush = Instant::now();
     }
+}
+
+fn emit_progress_batch(
+    sender: &Sender<ScanEvent>,
+    request: &ScanRequest,
+    progress: &ProgressInfo,
+    warnings: &mut Vec<String>,
+) {
+    let _ = sender.send(ScanEvent::Batch(ScanBatch {
+        session_id: request.session_id,
+        entries: Vec::new(),
+        progress: crate::model::ProgressSnapshot {
+            current_path: progress.current_path.clone(),
+            files_scanned: progress.files_scanned,
+            directories_scanned: progress.directories_scanned,
+            bytes_scanned: progress.bytes_scanned,
+            directories_discovered: progress.directories_discovered,
+            finished: progress.finished,
+        },
+        warnings: std::mem::take(warnings),
+    }));
 }
 
 fn flush_batch(

@@ -73,11 +73,12 @@ impl DiskAnalyzerApp {
             let mut cx = cx.clone();
             async move {
                 loop {
-                    Timer::after(Duration::from_millis(50)).await;
+                    Timer::after(Duration::from_millis(75)).await;
                     if this
                         .update(&mut cx, |this, cx: &mut Context<Self>| {
-                            this.process_scan_events();
-                            cx.notify();
+                            if this.process_scan_events() {
+                                cx.notify();
+                            }
                         })
                         .is_err()
                     {
@@ -89,13 +90,15 @@ impl DiskAnalyzerApp {
         .detach();
     }
 
-    fn process_scan_events(&mut self) {
+    fn process_scan_events(&mut self) -> bool {
         let Some(receiver) = &self.receiver else {
-            return;
+            return false;
         };
 
+        let mut changed = false;
         let mut clear_receiver = false;
         for event in receiver.try_iter() {
+            changed = true;
             if matches!(
                 event,
                 ScanEvent::Finished { .. } | ScanEvent::Cancelled { .. }
@@ -109,6 +112,8 @@ impl DiskAnalyzerApp {
             self.receiver = None;
             self.active_scan = None;
         }
+
+        changed
     }
 
     fn start_scan(&mut self, request: ScanRequest) {
