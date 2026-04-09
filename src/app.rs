@@ -4,26 +4,37 @@ use std::time::Duration;
 use anyhow::Result;
 use crossbeam_channel::Receiver;
 use gpui::{
-    anchored, div, point, prelude::*, px, relative, rgb, size, uniform_list, App, Application,
-    AsyncApp, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
+    anchored, div, point, prelude::*, px, rgb, size, uniform_list, App, Application, AsyncApp,
+    Bounds, ClickEvent, Context, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
     PathPromptOptions, Pixels, PromptLevel, SharedString, Timer, WeakEntity, Window,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
+use gpui_component::{
+    button::{Button, ButtonVariants},
+    progress::Progress,
+    Disableable, Icon, IconName, Root, Sizable, Size,
+};
+use gpui_component_assets::Assets;
 
-use crate::model::{AppModel, NodeId};
+use crate::model::{AppModel, NodeId, NodeKind};
 use crate::platform::{reveal_in_file_manager, trash_path};
 use crate::scanner::{spawn_scan, ScanEvent, ScanHandle, ScanRequest};
 use crate::ui::{format_bytes, format_duration, shorten_path};
 
 pub fn run() -> Result<()> {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1180.0), px(760.0)), cx);
+    Application::new().with_assets(Assets).run(|cx: &mut App| {
+        gpui_component::init(cx);
+
+        let bounds = Bounds::centered(None, size(px(1280.0), px(820.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(DiskAnalyzerApp::new),
+            |window, cx| {
+                let view = cx.new(DiskAnalyzerApp::new);
+                cx.new(|cx| Root::new(view, window, cx))
+            },
         )
         .expect("failed to open disk analyzer window");
         cx.activate(true);
@@ -64,9 +75,17 @@ impl ThemePreference {
 
     fn label(self) -> &'static str {
         match self {
-            Self::System => "Theme: System",
-            Self::Light => "Theme: Light",
-            Self::Dark => "Theme: Dark",
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    fn icon(self) -> IconName {
+        match self {
+            Self::System => IconName::Palette,
+            Self::Light => IconName::Sun,
+            Self::Dark => IconName::Moon,
         }
     }
 }
@@ -75,8 +94,8 @@ impl ThemePreference {
 struct AppTheme {
     app_bg: u32,
     panel_bg: u32,
-    surface_bg: u32,
-    surface_alt_bg: u32,
+    elevated_bg: u32,
+    elevated_alt_bg: u32,
     menu_bg: u32,
     border: u32,
     border_subtle: u32,
@@ -84,13 +103,12 @@ struct AppTheme {
     text_secondary: u32,
     text_muted: u32,
     accent: u32,
+    accent_soft: u32,
     selection_bg: u32,
     row_bg: u32,
     row_hover: u32,
-    progress_track: u32,
-    progress_fill: u32,
-    button_disabled_bg: u32,
-    button_disabled_text: u32,
+    success: u32,
+    warning: u32,
     danger: u32,
 }
 
@@ -107,47 +125,45 @@ impl AppTheme {
 
         if dark {
             Self {
-                app_bg: 0x1c1c1e,
-                panel_bg: 0x242426,
-                surface_bg: 0x2c2c2e,
-                surface_alt_bg: 0x3a3a3c,
-                menu_bg: 0x2c2c2e,
-                border: 0x444447,
-                border_subtle: 0x343438,
-                text_primary: 0xf5f5f7,
-                text_secondary: 0xd1d1d6,
-                text_muted: 0x8e8e93,
-                accent: 0x0a84ff,
-                selection_bg: 0x17395c,
-                row_bg: 0x242426,
-                row_hover: 0x343438,
-                progress_track: 0x3a3a3c,
-                progress_fill: 0x0a84ff,
-                button_disabled_bg: 0x2c2c2e,
-                button_disabled_text: 0x6b7280,
-                danger: 0xff6b6b,
+                app_bg: 0x16171a,
+                panel_bg: 0x1d1f23,
+                elevated_bg: 0x23262b,
+                elevated_alt_bg: 0x2b3036,
+                menu_bg: 0x25292f,
+                border: 0x3b4149,
+                border_subtle: 0x2c3138,
+                text_primary: 0xf5f7fa,
+                text_secondary: 0xcdd4de,
+                text_muted: 0x8f98a5,
+                accent: 0x3b82f6,
+                accent_soft: 0x12284a,
+                selection_bg: 0x1a3156,
+                row_bg: 0x1d1f23,
+                row_hover: 0x262b31,
+                success: 0x22c55e,
+                warning: 0xf59e0b,
+                danger: 0xef4444,
             }
         } else {
             Self {
-                app_bg: 0xf5f5f7,
+                app_bg: 0xf3f5f8,
                 panel_bg: 0xffffff,
-                surface_bg: 0xffffff,
-                surface_alt_bg: 0xf3f4f6,
+                elevated_bg: 0xffffff,
+                elevated_alt_bg: 0xf7f8fa,
                 menu_bg: 0xffffff,
-                border: 0xd1d5db,
-                border_subtle: 0xe5e7eb,
-                text_primary: 0x1c1c1e,
-                text_secondary: 0x3a3a3c,
-                text_muted: 0x6e6e73,
-                accent: 0x0a64dc,
-                selection_bg: 0xe8f1ff,
+                border: 0xd7dde5,
+                border_subtle: 0xe7ebf0,
+                text_primary: 0x111827,
+                text_secondary: 0x334155,
+                text_muted: 0x64748b,
+                accent: 0x2563eb,
+                accent_soft: 0xe8f0ff,
+                selection_bg: 0xeaf2ff,
                 row_bg: 0xffffff,
-                row_hover: 0xf3f4f6,
-                progress_track: 0xe5e7eb,
-                progress_fill: 0x0a64dc,
-                button_disabled_bg: 0xf3f4f6,
-                button_disabled_text: 0x9ca3af,
-                danger: 0xc62828,
+                row_hover: 0xf7f8fa,
+                success: 0x16a34a,
+                warning: 0xd97706,
+                danger: 0xdc2626,
             }
         }
     }
@@ -221,12 +237,7 @@ impl DiskAnalyzerApp {
         self.active_scan = Some(scan_handle);
     }
 
-    fn choose_directory(
-        &mut self,
-        _: &MouseDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn choose_directory_impl(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus_handle);
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -261,7 +272,16 @@ impl DiskAnalyzerApp {
         .detach();
     }
 
-    fn rescan_root(&mut self, _: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn choose_directory_click(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.choose_directory_impl(window, cx);
+    }
+
+    fn rescan_root_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.rescan_root_action(cx);
     }
 
@@ -276,7 +296,7 @@ impl DiskAnalyzerApp {
         cx.notify();
     }
 
-    fn rescan_selected(&mut self, _: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn rescan_selected_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.rescan_selected_action(cx);
     }
 
@@ -289,6 +309,10 @@ impl DiskAnalyzerApp {
 
         self.start_scan(ScanRequest::subtree(selected));
         cx.notify();
+    }
+
+    fn reveal_selected_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.reveal_selected_action(cx);
     }
 
     fn reveal_selected_action(&mut self, cx: &mut Context<Self>) {
@@ -304,6 +328,15 @@ impl DiskAnalyzerApp {
         }
 
         cx.notify();
+    }
+
+    fn delete_selected_click(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.confirm_delete_action(window, cx);
     }
 
     fn confirm_delete_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -349,6 +382,16 @@ impl DiskAnalyzerApp {
             }
         })
         .detach();
+    }
+
+    fn toggle_theme_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.theme_preference = self.theme_preference.cycle();
+        cx.notify();
+    }
+
+    fn toggle_sort_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.model.toggle_sort_mode();
+        cx.notify();
     }
 
     fn select_row(&mut self, node_id: NodeId, window: &mut Window, cx: &mut Context<Self>) {
@@ -418,7 +461,7 @@ impl DiskAnalyzerApp {
             })
             .unwrap_or(0);
 
-        point(px(320.0), px(220.0 + (row_index.min(10) as f32 * 28.0)))
+        point(px(340.0), px(250.0 + (row_index.min(10) as f32 * 32.0)))
     }
 
     fn open_context_for_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -520,78 +563,385 @@ impl DiskAnalyzerApp {
         cx.notify();
     }
 
-    fn render_action_button(
-        &self,
-        label: &'static str,
-        enabled: bool,
-        color: u32,
-        theme: AppTheme,
-        on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
-        let is_neutral = color == theme.surface_alt_bg || color == theme.surface_bg;
-        let mut button = div()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(if enabled {
-                if is_neutral {
-                    theme.border
-                } else {
-                    color
-                }
-            } else {
-                theme.border
-            }))
-            .bg(rgb(if enabled {
-                color
-            } else {
-                theme.button_disabled_bg
-            }))
-            .text_color(rgb(if enabled {
-                if is_neutral {
-                    theme.text_primary
-                } else {
-                    0xffffff
-                }
-            } else {
-                theme.button_disabled_text
-            }))
-            .child(label);
+    fn selected_children_count(&self) -> usize {
+        self.model
+            .selected_node()
+            .map(|node| {
+                node.children
+                    .iter()
+                    .filter(|&&child| {
+                        self.model
+                            .nodes
+                            .get(child)
+                            .is_some_and(|child| !child.removed)
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    }
 
-        if enabled {
-            button = button
-                .cursor_pointer()
-                .hover(|style| style.opacity(0.92))
-                .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                    on_click(event, window, cx)
-                });
+    fn selection_kind_label(kind: NodeKind) -> &'static str {
+        match kind {
+            NodeKind::Directory => "Directory",
+            NodeKind::File => "File",
+            NodeKind::Symlink => "Symlink",
+            NodeKind::Other => "Other",
         }
+    }
 
-        button
+    fn scan_state_label(&self) -> &'static str {
+        match self.model.scan_state.as_ref() {
+            Some(state) if !state.progress.finished => "Scanning",
+            Some(_) => "Ready",
+            None => "Idle",
+        }
+    }
+
+    fn scan_state_color(&self, theme: AppTheme) -> u32 {
+        match self.model.scan_state.as_ref() {
+            Some(state) if !state.progress.finished => theme.accent,
+            Some(_) => theme.success,
+            None => theme.text_muted,
+        }
+    }
+
+    fn render_status_pill(&self, theme: AppTheme) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_full()
+            .bg(rgb(theme.accent_soft))
+            .border_1()
+            .border_color(rgb(theme.border_subtle))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .size(px(8.0))
+                            .rounded_full()
+                            .bg(rgb(self.scan_state_color(theme))),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme.text_secondary))
+                            .child(self.scan_state_label()),
+                    ),
+            )
+    }
+
+    fn render_metric_card(
+        &self,
+        icon: IconName,
+        label: &str,
+        value: String,
+        tone: u32,
+        theme: AppTheme,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .min_w(px(170.0))
+            .rounded_lg()
+            .bg(rgb(theme.elevated_bg))
+            .border_1()
+            .border_color(rgb(theme.border_subtle))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .p_2()
+                            .rounded_md()
+                            .bg(rgb(theme.accent_soft))
+                            .child(Icon::new(icon).with_size(Size::Small).text_color(rgb(tone))),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(theme.text_muted))
+                            .child(label.to_string()),
+                    ),
+            )
+            .child(
+                div()
+                    .text_lg()
+                    .text_color(rgb(theme.text_primary))
+                    .child(value),
+            )
+    }
+
+    fn action_button(
+        id: &'static str,
+        label: impl Into<SharedString>,
+        icon: IconName,
+        enabled: bool,
+        primary: bool,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Button {
+        let button = Button::new(id)
+            .label(label)
+            .icon(icon)
+            .with_size(Size::Small)
+            .compact()
+            .disabled(!enabled)
+            .on_click(on_click);
+
+        if primary {
+            button.primary()
+        } else {
+            button.outline()
+        }
     }
 
     fn render_header(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
         let progress = self.model.progress();
-        let progress_fraction = progress.fraction();
         let root_text = self
             .model
             .active_root_path()
-            .map(|path| shorten_path(path, 88))
-            .unwrap_or_else(|| String::from("No root selected"));
+            .map(|path| shorten_path(path, 96))
+            .unwrap_or_else(|| String::from("Choose a root folder to analyze disk usage."));
         let duration = self
             .model
             .last_scan_duration()
             .map(format_duration)
-            .unwrap_or_else(|| String::from("in progress"));
+            .unwrap_or_else(|| String::from("not started"));
 
         div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .p_4()
+            .bg(rgb(theme.panel_bg))
+            .border_b_1()
+            .border_color(rgb(theme.border_subtle))
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_start()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .size(px(40.0))
+                                            .rounded_lg()
+                                            .bg(rgb(theme.accent_soft))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(
+                                                Icon::new(IconName::ChartPie)
+                                                    .with_size(Size::Medium)
+                                                    .text_color(rgb(theme.accent)),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_xl()
+                                                    .text_color(rgb(theme.text_primary))
+                                                    .child("Disk Analyzer"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(rgb(theme.text_secondary))
+                                                    .child("Fast, live disk usage inspection with safe actions."),
+                                            ),
+                                    ),
+                            )
+                            .child(div().text_color(rgb(theme.text_muted)).child(root_text)),
+                    )
+                    .child(self.render_status_pill(theme)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .child(Self::action_button(
+                        "choose-folder",
+                        "Choose Folder",
+                        IconName::FolderOpen,
+                        true,
+                        true,
+                        cx.listener(Self::choose_directory_click),
+                    ))
+                    .child(Self::action_button(
+                        "rescan-root",
+                        "Rescan Root",
+                        IconName::Redo,
+                        self.model.active_root_path().is_some(),
+                        false,
+                        cx.listener(Self::rescan_root_click),
+                    ))
+                    .child(Self::action_button(
+                        "rescan-selection",
+                        "Rescan Selection",
+                        IconName::Replace,
+                        self.model.selected_path().is_some(),
+                        false,
+                        cx.listener(Self::rescan_selected_click),
+                    ))
+                    .child(Self::action_button(
+                        "reveal-selection",
+                        "Reveal",
+                        IconName::ExternalLink,
+                        self.model.selected_path().is_some(),
+                        false,
+                        cx.listener(Self::reveal_selected_click),
+                    ))
+                    .child(
+                        Button::new("theme-toggle")
+                            .label(format!("Theme: {}", self.theme_preference.label()))
+                            .icon(self.theme_preference.icon())
+                            .with_size(Size::Small)
+                            .compact()
+                            .outline()
+                            .on_click(cx.listener(Self::toggle_theme_click)),
+                    )
+                    .child(
+                        Button::new("sort-toggle")
+                            .label(self.model.sort_mode.label())
+                            .icon(match self.model.sort_mode {
+                                crate::model::SortMode::SizeDesc => IconName::ChartPie,
+                                crate::model::SortMode::NameAsc => IconName::ALargeSmall,
+                            })
+                            .with_size(Size::Small)
+                            .compact()
+                            .outline()
+                            .on_click(cx.listener(Self::toggle_sort_click)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_3()
+                    .flex_wrap()
+                    .child(self.render_metric_card(
+                        IconName::File,
+                        "Files scanned",
+                        progress.files_scanned.to_string(),
+                        theme.accent,
+                        theme,
+                    ))
+                    .child(self.render_metric_card(
+                        IconName::Folder,
+                        "Folders scanned",
+                        progress.directories_scanned.to_string(),
+                        theme.warning,
+                        theme,
+                    ))
+                    .child(self.render_metric_card(
+                        IconName::ChartPie,
+                        "Bytes observed",
+                        format_bytes(progress.bytes_scanned),
+                        theme.success,
+                        theme,
+                    ))
+                    .child(self.render_metric_card(
+                        IconName::Calendar,
+                        "Last run",
+                        duration,
+                        theme.text_secondary,
+                        theme,
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_3()
+                    .rounded_lg()
+                    .bg(rgb(theme.elevated_alt_bg))
+                    .border_1()
+                    .border_color(rgb(theme.border_subtle))
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_color(rgb(theme.text_secondary))
+                                    .child(format!("Progress {:.0}%", progress.fraction() * 100.0)),
+                            )
+                            .child(
+                                div()
+                                    .text_color(rgb(theme.text_muted))
+                                    .child(
+                                        progress
+                                            .current_path
+                                            .as_deref()
+                                            .map(|path| shorten_path(path, 88))
+                                            .unwrap_or_else(|| String::from("Idle")),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        Progress::new()
+                            .value(progress.fraction() * 100.0)
+                            .h(px(10.0)),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(theme.text_muted))
+                            .child(self.model.status_message.clone()),
+                    ),
+            )
+    }
+
+    fn render_info_row(&self, label: &str, value: String, theme: AppTheme) -> impl IntoElement {
+        div()
+            .flex()
+            .justify_between()
+            .gap_3()
+            .py_1()
+            .child(
+                div()
+                    .text_color(rgb(theme.text_muted))
+                    .child(label.to_string()),
+            )
+            .child(
+                div()
+                    .text_right()
+                    .text_color(rgb(theme.text_primary))
+                    .child(value),
+            )
+    }
+
+    fn render_details_pane(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
+        let selected = self.model.selected_node().cloned();
+        let warning_text = self.model.warnings.last().cloned();
+
+        div()
+            .w(px(340.0))
             .flex()
             .flex_col()
             .gap_3()
             .p_3()
             .bg(rgb(theme.panel_bg))
-            .border_b_1()
+            .border_l_1()
             .border_color(rgb(theme.border_subtle))
             .child(
                 div()
@@ -607,154 +957,196 @@ impl DiskAnalyzerApp {
                                 div()
                                     .text_lg()
                                     .text_color(rgb(theme.text_primary))
-                                    .child("Disk Analyzer"),
+                                    .child("Details"),
                             )
-                            .child(div().text_color(rgb(theme.text_muted)).child(root_text)),
+                            .child(
+                                div()
+                                    .text_color(rgb(theme.text_muted))
+                                    .child("Selection context and quick actions"),
+                            ),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(self.render_action_button(
-                                "Choose Folder",
-                                true,
-                                theme.accent,
-                                theme,
-                                cx.listener(Self::choose_directory),
-                            ))
-                            .child(self.render_action_button(
-                                "Rescan Root",
-                                self.model.active_root_path().is_some(),
-                                theme.accent,
-                                theme,
-                                cx.listener(Self::rescan_root),
-                            ))
-                            .child(self.render_action_button(
-                                "Rescan Selection",
-                                self.model.selected_path().is_some(),
-                                theme.accent,
-                                theme,
-                                cx.listener(Self::rescan_selected),
-                            )),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_4()
-                    .child(self.stat_card("Files", progress.files_scanned.to_string(), theme))
-                    .child(self.stat_card(
-                        "Folders",
-                        progress.directories_scanned.to_string(),
-                        theme,
-                    ))
-                    .child(self.stat_card(
-                        "Accumulated",
-                        format_bytes(progress.bytes_scanned),
-                        theme,
-                    ))
-                    .child(self.stat_card("Last Run", duration, theme)),
+                    .child(Icon::new(IconName::Inspector).with_size(Size::Small).text_color(rgb(theme.text_muted))),
             )
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .h(px(10.0))
-                            .w_full()
-                            .rounded_md()
-                            .bg(rgb(theme.progress_track))
-                            .child(
+                    .gap_3()
+                    .p_3()
+                    .rounded_lg()
+                    .bg(rgb(theme.elevated_bg))
+                    .border_1()
+                    .border_color(rgb(theme.border_subtle))
+                    .when_some(selected.clone(), |this, node| {
+                        this.child(
+                            div()
+                                .flex()
+                                .items_start()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .size(px(36.0))
+                                        .rounded_lg()
+                                        .bg(rgb(theme.accent_soft))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            Icon::new(match node.kind {
+                                                NodeKind::Directory => IconName::Folder,
+                                                NodeKind::File => IconName::File,
+                                                NodeKind::Symlink => IconName::ExternalLink,
+                                                NodeKind::Other => IconName::Frame,
+                                            })
+                                            .with_size(Size::Small)
+                                            .text_color(rgb(theme.accent)),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_color(rgb(theme.text_primary))
+                                                .child(node.name.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_color(rgb(theme.text_muted))
+                                                .child(shorten_path(&node.path, 44)),
+                                        ),
+                                ),
+                        )
+                        .child(self.render_info_row(
+                            "Type",
+                            Self::selection_kind_label(node.kind).to_string(),
+                            theme,
+                        ))
+                        .child(self.render_info_row(
+                            "Size",
+                            format_bytes(node.recursive_size),
+                            theme,
+                        ))
+                        .child(self.render_info_row(
+                            "Children",
+                            self.selected_children_count().to_string(),
+                            theme,
+                        ))
+                        .child(self.render_info_row(
+                            "Depth",
+                            node.depth.to_string(),
+                            theme,
+                        ))
+                        .when_some(node.last_error.clone(), |this, error| {
+                            this.child(
                                 div()
-                                    .h_full()
-                                    .w(relative(progress_fraction))
+                                    .p_2()
                                     .rounded_md()
-                                    .bg(rgb(theme.progress_fill)),
-                            ),
-                    )
+                                    .bg(rgb(theme.accent_soft))
+                                    .border_1()
+                                    .border_color(rgb(theme.border_subtle))
+                                    .child(
+                                        div()
+                                            .text_color(rgb(theme.danger))
+                                            .child(error),
+                                    ),
+                            )
+                        })
+                    })
+                    .when(selected.is_none(), |this| {
+                        this.child(
+                            div()
+                                .text_color(rgb(theme.text_muted))
+                                .child("Select an item in the tree to inspect it and run focused actions."),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_3()
+                    .rounded_lg()
+                    .bg(rgb(theme.elevated_bg))
+                    .border_1()
+                    .border_color(rgb(theme.border_subtle))
                     .child(
                         div()
-                            .flex()
-                            .justify_between()
                             .text_color(rgb(theme.text_secondary))
-                            .child(format!("Progress: {:.0}%", progress_fraction * 100.0))
-                            .child(
-                                progress
-                                    .current_path
-                                    .as_deref()
-                                    .map(|path| shorten_path(path, 78))
-                                    .unwrap_or_else(|| String::from("Idle")),
-                            ),
+                            .child("Quick Actions"),
+                    )
+                    .child(Self::action_button(
+                        "details-reveal",
+                        "Reveal in file manager",
+                        IconName::ExternalLink,
+                        self.model.selected_path().is_some(),
+                        false,
+                        cx.listener(Self::reveal_selected_click),
+                    ))
+                    .child(Self::action_button(
+                        "details-rescan",
+                        "Rescan selected subtree",
+                        IconName::Redo2,
+                        self.model.selected_path().is_some(),
+                        false,
+                        cx.listener(Self::rescan_selected_click),
+                    ))
+                    .child(
+                        Button::new("details-delete")
+                            .label("Move to Trash")
+                            .icon(IconName::Delete)
+                            .with_size(Size::Small)
+                            .compact()
+                            .danger()
+                            .disabled(self.model.selected_path().is_none())
+                            .on_click(cx.listener(Self::delete_selected_click)),
                     ),
             )
             .child(
                 div()
                     .flex()
-                    .justify_between()
-                    .items_center()
+                    .flex_col()
+                    .gap_2()
+                    .p_3()
+                    .rounded_lg()
+                    .bg(rgb(theme.elevated_bg))
+                    .border_1()
+                    .border_color(rgb(theme.border_subtle))
                     .child(
-                        div().text_color(rgb(theme.text_muted)).child(
-                            "Keyboard: Enter/Space toggle, Del deletes, Shift+F10 opens menu, T changes theme",
-                        ),
+                        div()
+                            .text_color(rgb(theme.text_secondary))
+                            .child("Hints"),
                     )
                     .child(
                         div()
-                            .flex()
-                            .gap_2()
-                            .child(self.render_action_button(
-                                self.theme_preference.label(),
-                                true,
-                                theme.surface_alt_bg,
-                                theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.theme_preference = this.theme_preference.cycle();
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(self.render_action_button(
-                                self.model.sort_mode.label(),
-                                true,
-                                theme.surface_alt_bg,
-                                theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.model.toggle_sort_mode();
-                                    cx.notify();
-                                }),
-                            )),
-                    ),
+                            .text_color(rgb(theme.text_muted))
+                            .child("Arrow keys move selection. Enter expands folders or reveals files. Shift+F10 opens the context menu."),
+                    )
+                    .when_some(warning_text, |this, warning| {
+                        this.child(
+                            div()
+                                .p_2()
+                                .rounded_md()
+                                .bg(rgb(theme.accent_soft))
+                                .border_1()
+                                .border_color(rgb(theme.border_subtle))
+                                .child(
+                                    div()
+                                        .text_color(rgb(theme.warning))
+                                        .child(warning),
+                                ),
+                        )
+                    }),
             )
-            .child(
-                div()
-                    .text_color(rgb(theme.text_muted))
-                    .child(self.model.status_message.clone()),
-            )
-    }
-
-    fn stat_card(&self, label: &str, value: String, theme: AppTheme) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .bg(rgb(theme.surface_alt_bg))
-            .border_1()
-            .border_color(rgb(theme.border_subtle))
-            .min_w(px(150.0))
-            .child(
-                div()
-                    .text_color(rgb(theme.text_muted))
-                    .child(label.to_string()),
-            )
-            .child(div().text_color(rgb(theme.text_primary)).child(value))
     }
 
     fn render_menu_item(
         &self,
         label: &'static str,
+        icon: IconName,
         accent: u32,
         enabled: bool,
         theme: AppTheme,
@@ -765,18 +1157,25 @@ impl DiskAnalyzerApp {
             .py_2()
             .rounded_sm()
             .border_1()
-            .border_color(rgb(accent))
+            .border_color(rgb(if enabled { accent } else { theme.border_subtle }))
             .bg(rgb(if enabled {
-                theme.surface_bg
+                theme.elevated_bg
             } else {
-                theme.button_disabled_bg
+                theme.elevated_alt_bg
             }))
             .text_color(rgb(if enabled {
                 theme.text_primary
             } else {
-                theme.button_disabled_text
+                theme.text_muted
             }))
-            .child(label);
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(Icon::new(icon).with_size(Size::Small))
+                    .child(label),
+            );
 
         if enabled {
             item = item
@@ -808,12 +1207,12 @@ impl DiskAnalyzerApp {
         Some(
             anchored().position(menu.position).snap_to_window().child(
                 div()
-                    .w(px(220.0))
+                    .w(px(240.0))
                     .flex()
                     .flex_col()
                     .gap_1()
                     .p_2()
-                    .rounded_md()
+                    .rounded_lg()
                     .border_1()
                     .border_color(rgb(theme.border))
                     .bg(rgb(theme.menu_bg))
@@ -827,6 +1226,7 @@ impl DiskAnalyzerApp {
                     )
                     .child(self.render_menu_item(
                         "Reveal in File Manager",
+                        IconName::ExternalLink,
                         theme.accent,
                         has_selection,
                         theme,
@@ -834,6 +1234,7 @@ impl DiskAnalyzerApp {
                     ))
                     .child(self.render_menu_item(
                         "Rescan Selected Subtree",
+                        IconName::Redo2,
                         theme.accent,
                         has_selection,
                         theme,
@@ -841,6 +1242,7 @@ impl DiskAnalyzerApp {
                     ))
                     .child(self.render_menu_item(
                         "Rescan Root",
+                        IconName::Redo,
                         theme.accent,
                         has_root,
                         theme,
@@ -848,6 +1250,7 @@ impl DiskAnalyzerApp {
                     ))
                     .child(self.render_menu_item(
                         "Delete",
+                        IconName::Delete,
                         theme.danger,
                         has_selection,
                         theme,
@@ -869,6 +1272,23 @@ impl DiskAnalyzerApp {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::dismiss_context_menu))
             .on_key_down(cx.listener(Self::handle_key_down))
             .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .px_3()
+                    .py_2()
+                    .bg(rgb(theme.elevated_alt_bg))
+                    .border_b_1()
+                    .border_color(rgb(theme.border_subtle))
+                    .child(div().text_color(rgb(theme.text_secondary)).child("Tree"))
+                    .child(
+                        div()
+                            .text_color(rgb(theme.text_muted))
+                            .child("Right click for actions"),
+                    ),
+            )
+            .child(
                 uniform_list(
                     "disk-tree",
                     row_count,
@@ -884,20 +1304,18 @@ impl DiskAnalyzerApp {
                                 let context_view = view.clone();
                                 let toggle_view = view.clone();
                                 let indent = px((row.depth * 18) as f32);
-                                let caret = if row.kind.is_directory() {
-                                    if row.has_children {
+                                let icon = match row.kind {
+                                    NodeKind::Directory => {
                                         if row.expanded {
-                                            "▾"
+                                            IconName::FolderOpen
                                         } else {
-                                            "▸"
+                                            IconName::FolderClosed
                                         }
-                                    } else {
-                                        "▹"
                                     }
-                                } else {
-                                    "•"
+                                    NodeKind::File => IconName::File,
+                                    NodeKind::Symlink => IconName::ExternalLink,
+                                    NodeKind::Other => IconName::Frame,
                                 };
-
                                 let row_bg = if row.selected {
                                     theme.selection_bg
                                 } else {
@@ -909,9 +1327,9 @@ impl DiskAnalyzerApp {
                                     theme.text_primary
                                 };
 
-                                let mut row_div = div()
+                                let row_div = div()
                                     .id(index)
-                                    .h(px(28.0))
+                                    .h(px(44.0))
                                     .w_full()
                                     .flex()
                                     .justify_between()
@@ -938,16 +1356,37 @@ impl DiskAnalyzerApp {
                                         });
                                     });
 
-                                if row.kind.is_directory() {
-                                    row_div = row_div.on_mouse_down(
-                                        MouseButton::Left,
-                                        move |_, window, cx| {
-                                            let _ = toggle_view.update(cx, |this, cx| {
-                                                this.toggle_row(node_id, window, cx)
-                                            });
-                                        },
-                                    );
-                                }
+                                let toggle = if row.kind.is_directory() && row.has_children {
+                                    let toggle_view = toggle_view.clone();
+                                    div()
+                                        .size(px(22.0))
+                                        .rounded_sm()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .hover(|style| style.bg(rgb(theme.elevated_alt_bg)))
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            move |event, window, cx| {
+                                                cx.stop_propagation();
+                                                let _ = toggle_view.update(cx, |this, cx| {
+                                                    this.toggle_row(node_id, window, cx)
+                                                });
+                                                let _ = event;
+                                            },
+                                        )
+                                        .child(
+                                            Icon::new(if row.expanded {
+                                                IconName::ChevronDown
+                                            } else {
+                                                IconName::ChevronRight
+                                            })
+                                            .with_size(Size::XSmall)
+                                            .text_color(rgb(theme.text_muted)),
+                                        )
+                                } else {
+                                    div().size(px(22.0))
+                                };
 
                                 elements.push(
                                     row_div
@@ -957,32 +1396,50 @@ impl DiskAnalyzerApp {
                                                 .items_center()
                                                 .gap_2()
                                                 .pl(indent)
+                                                .child(toggle)
                                                 .child(
-                                                    div()
-                                                        .text_color(rgb(theme.accent))
-                                                        .child(caret),
+                                                    Icon::new(icon)
+                                                        .with_size(Size::Small)
+                                                        .text_color(rgb(theme.accent)),
                                                 )
                                                 .child(
                                                     div()
-                                                        .text_color(rgb(name_color))
-                                                        .child(row.name),
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_0p5()
+                                                        .child(
+                                                            div()
+                                                                .text_color(rgb(name_color))
+                                                                .child(row.name),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_color(rgb(theme.text_muted))
+                                                                .child(shorten_path(&row.path, 56)),
+                                                        ),
                                                 ),
                                         )
                                         .child(
                                             div()
                                                 .flex()
                                                 .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    div()
-                                                        .text_color(rgb(theme.text_muted))
-                                                        .child(shorten_path(&row.path, 42)),
-                                                )
+                                                .gap_3()
                                                 .child(
                                                     div()
                                                         .text_color(rgb(theme.text_secondary))
                                                         .child(format_bytes(row.recursive_size)),
-                                                ),
+                                                )
+                                                .when(row.has_error, |this| {
+                                                    this.child(
+                                                        div()
+                                                            .px_2()
+                                                            .py_1()
+                                                            .rounded_full()
+                                                            .bg(rgb(theme.accent_soft))
+                                                            .text_color(rgb(theme.danger))
+                                                            .child("Error"),
+                                                    )
+                                                }),
                                         ),
                                 );
                             }
@@ -1020,6 +1477,24 @@ impl Render for DiskAnalyzerApp {
             .bg(rgb(theme.app_bg))
             .text_color(rgb(theme.text_primary))
             .child(self.render_header(cx, theme))
-            .child(self.render_tree(cx, theme))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div().flex_1().min_w_0().p_3().child(
+                            div()
+                                .size_full()
+                                .rounded_lg()
+                                .overflow_hidden()
+                                .bg(rgb(theme.panel_bg))
+                                .border_1()
+                                .border_color(rgb(theme.border_subtle))
+                                .child(self.render_tree(cx, theme)),
+                        ),
+                    )
+                    .child(self.render_details_pane(cx, theme)),
+            )
     }
 }
