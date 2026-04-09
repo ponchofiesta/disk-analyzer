@@ -279,7 +279,7 @@ impl AppModel {
             self.selected = Some(root_id);
             self.expanded.insert(root_id);
         } else if self.path_index.contains_key(&request.target) {
-            self.replace_subtree(&request.target);
+            self.reset_subtree_for_rescan(&request.target);
         }
 
         self.scan_state = Some(ScanState {
@@ -364,7 +364,7 @@ impl AppModel {
         self.context_target = None;
     }
 
-    fn replace_subtree(&mut self, target: &Path) {
+    fn reset_subtree_for_rescan(&mut self, target: &Path) {
         let Some(target_id) = self.path_index.get(target).copied() else {
             return;
         };
@@ -374,20 +374,18 @@ impl AppModel {
             return;
         }
 
-        let Some(parent_id) = self.nodes[target_id].parent else {
-            self.clear_all();
-            return;
-        };
-
         let removed_size = self.nodes[target_id].recursive_size;
-        self.nodes[parent_id]
-            .children
-            .retain(|child| *child != target_id);
-        self.propagate_size_delta(Some(parent_id), -(removed_size as i128));
-        self.mark_removed(target_id);
-        self.expanded.remove(&target_id);
-        if self.selected == Some(target_id) {
-            self.selected = Some(parent_id);
+        let children = self.nodes[target_id].children.clone();
+        for child_id in children {
+            self.mark_removed(child_id);
+        }
+
+        self.nodes[target_id].children.clear();
+        self.nodes[target_id].recursive_size = 0;
+        self.nodes[target_id].last_error = None;
+
+        if let Some(parent_id) = self.nodes[target_id].parent {
+            self.propagate_size_delta(Some(parent_id), -(removed_size as i128));
         }
     }
 
