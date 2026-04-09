@@ -1,0 +1,10 @@
+[package]
+name = "disk-analyzer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+crossbeam-channel = "0.5"
+gpui = "0.2.2"
+trash = "5.2"
