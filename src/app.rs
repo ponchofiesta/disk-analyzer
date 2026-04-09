@@ -6,8 +6,8 @@ use crossbeam_channel::Receiver;
 use gpui::{
     anchored, div, point, prelude::*, px, relative, rgb, size, uniform_list, App, Application,
     AsyncApp, Bounds, Context, FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseDownEvent,
-    PathPromptOptions, Pixels, PromptLevel, SharedString, Timer, WeakEntity, Window, WindowBounds,
-    WindowOptions,
+    PathPromptOptions, Pixels, PromptLevel, SharedString, Timer, WeakEntity, Window,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
 
 use crate::model::{AppModel, NodeId};
@@ -37,12 +37,120 @@ struct DiskAnalyzerApp {
     receiver: Option<Receiver<ScanEvent>>,
     focus_handle: FocusHandle,
     context_menu: Option<ContextMenuState>,
+    theme_preference: ThemePreference,
 }
 
 #[derive(Clone, Copy)]
 struct ContextMenuState {
     node_id: NodeId,
     position: gpui::Point<Pixels>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ThemePreference {
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    fn cycle(self) -> Self {
+        match self {
+            Self::System => Self::Light,
+            Self::Light => Self::Dark,
+            Self::Dark => Self::System,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::System => "Theme: System",
+            Self::Light => "Theme: Light",
+            Self::Dark => "Theme: Dark",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AppTheme {
+    app_bg: u32,
+    panel_bg: u32,
+    surface_bg: u32,
+    surface_alt_bg: u32,
+    menu_bg: u32,
+    border: u32,
+    border_subtle: u32,
+    text_primary: u32,
+    text_secondary: u32,
+    text_muted: u32,
+    accent: u32,
+    selection_bg: u32,
+    row_bg: u32,
+    row_hover: u32,
+    progress_track: u32,
+    progress_fill: u32,
+    button_disabled_bg: u32,
+    button_disabled_text: u32,
+    danger: u32,
+}
+
+impl AppTheme {
+    fn from_window(window: &Window, preference: ThemePreference) -> Self {
+        let dark = match preference {
+            ThemePreference::System => matches!(
+                window.appearance(),
+                WindowAppearance::Dark | WindowAppearance::VibrantDark
+            ),
+            ThemePreference::Light => false,
+            ThemePreference::Dark => true,
+        };
+
+        if dark {
+            Self {
+                app_bg: 0x1c1c1e,
+                panel_bg: 0x242426,
+                surface_bg: 0x2c2c2e,
+                surface_alt_bg: 0x3a3a3c,
+                menu_bg: 0x2c2c2e,
+                border: 0x444447,
+                border_subtle: 0x343438,
+                text_primary: 0xf5f5f7,
+                text_secondary: 0xd1d1d6,
+                text_muted: 0x8e8e93,
+                accent: 0x0a84ff,
+                selection_bg: 0x17395c,
+                row_bg: 0x242426,
+                row_hover: 0x343438,
+                progress_track: 0x3a3a3c,
+                progress_fill: 0x0a84ff,
+                button_disabled_bg: 0x2c2c2e,
+                button_disabled_text: 0x6b7280,
+                danger: 0xff6b6b,
+            }
+        } else {
+            Self {
+                app_bg: 0xf5f5f7,
+                panel_bg: 0xffffff,
+                surface_bg: 0xffffff,
+                surface_alt_bg: 0xf3f4f6,
+                menu_bg: 0xffffff,
+                border: 0xd1d5db,
+                border_subtle: 0xe5e7eb,
+                text_primary: 0x1c1c1e,
+                text_secondary: 0x3a3a3c,
+                text_muted: 0x6e6e73,
+                accent: 0x0a64dc,
+                selection_bg: 0xe8f1ff,
+                row_bg: 0xffffff,
+                row_hover: 0xf3f4f6,
+                progress_track: 0xe5e7eb,
+                progress_fill: 0x0a64dc,
+                button_disabled_bg: 0xf3f4f6,
+                button_disabled_text: 0x9ca3af,
+                danger: 0xc62828,
+            }
+        }
+    }
 }
 
 impl DiskAnalyzerApp {
@@ -53,6 +161,7 @@ impl DiskAnalyzerApp {
             receiver: None,
             focus_handle: cx.focus_handle(),
             context_menu: None,
+            theme_preference: ThemePreference::System,
         };
         app.spawn_event_poller(cx);
         app
@@ -397,6 +506,9 @@ impl DiskAnalyzerApp {
             "f10" if event.keystroke.modifiers.shift => self.open_context_for_selection(window, cx),
             "contextmenu" | "menu" => self.open_context_for_selection(window, cx),
             "f5" => self.rescan_root_action(cx),
+            "t" if !event.keystroke.modifiers.control && !event.keystroke.modifiers.platform => {
+                self.theme_preference = self.theme_preference.cycle()
+            }
             "r" if !event.keystroke.modifiers.control && !event.keystroke.modifiers.platform => {
                 self.rescan_selected_action(cx)
             }
@@ -413,21 +525,44 @@ impl DiskAnalyzerApp {
         label: &'static str,
         enabled: bool,
         color: u32,
+        theme: AppTheme,
         on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
+        let is_neutral = color == theme.surface_alt_bg || color == theme.surface_bg;
         let mut button = div()
             .px_3()
             .py_2()
             .rounded_md()
             .border_1()
-            .border_color(rgb(0x374151))
-            .bg(rgb(if enabled { color } else { 0x2b313b }))
-            .text_color(rgb(0xf9fafb))
+            .border_color(rgb(if enabled {
+                if is_neutral {
+                    theme.border
+                } else {
+                    color
+                }
+            } else {
+                theme.border
+            }))
+            .bg(rgb(if enabled {
+                color
+            } else {
+                theme.button_disabled_bg
+            }))
+            .text_color(rgb(if enabled {
+                if is_neutral {
+                    theme.text_primary
+                } else {
+                    0xffffff
+                }
+            } else {
+                theme.button_disabled_text
+            }))
             .child(label);
 
         if enabled {
             button = button
                 .cursor_pointer()
+                .hover(|style| style.opacity(0.92))
                 .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                     on_click(event, window, cx)
                 });
@@ -436,7 +571,7 @@ impl DiskAnalyzerApp {
         button
     }
 
-    fn render_header(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
         let progress = self.model.progress();
         let progress_fraction = progress.fraction();
         let root_text = self
@@ -455,9 +590,9 @@ impl DiskAnalyzerApp {
             .flex_col()
             .gap_3()
             .p_3()
-            .bg(rgb(0x111827))
+            .bg(rgb(theme.panel_bg))
             .border_b_1()
-            .border_color(rgb(0x1f2937))
+            .border_color(rgb(theme.border_subtle))
             .child(
                 div()
                     .flex()
@@ -471,10 +606,10 @@ impl DiskAnalyzerApp {
                             .child(
                                 div()
                                     .text_lg()
-                                    .text_color(rgb(0xf9fafb))
+                                    .text_color(rgb(theme.text_primary))
                                     .child("Disk Analyzer"),
                             )
-                            .child(div().text_color(rgb(0x9ca3af)).child(root_text)),
+                            .child(div().text_color(rgb(theme.text_muted)).child(root_text)),
                     )
                     .child(
                         div()
@@ -483,19 +618,22 @@ impl DiskAnalyzerApp {
                             .child(self.render_action_button(
                                 "Choose Folder",
                                 true,
-                                0x0f766e,
+                                theme.accent,
+                                theme,
                                 cx.listener(Self::choose_directory),
                             ))
                             .child(self.render_action_button(
                                 "Rescan Root",
                                 self.model.active_root_path().is_some(),
-                                0x1d4ed8,
+                                theme.accent,
+                                theme,
                                 cx.listener(Self::rescan_root),
                             ))
                             .child(self.render_action_button(
                                 "Rescan Selection",
                                 self.model.selected_path().is_some(),
-                                0x7c3aed,
+                                theme.accent,
+                                theme,
                                 cx.listener(Self::rescan_selected),
                             )),
                     ),
@@ -504,10 +642,18 @@ impl DiskAnalyzerApp {
                 div()
                     .flex()
                     .gap_4()
-                    .child(self.stat_card("Files", progress.files_scanned.to_string()))
-                    .child(self.stat_card("Folders", progress.directories_scanned.to_string()))
-                    .child(self.stat_card("Accumulated", format_bytes(progress.bytes_scanned)))
-                    .child(self.stat_card("Last Run", duration)),
+                    .child(self.stat_card("Files", progress.files_scanned.to_string(), theme))
+                    .child(self.stat_card(
+                        "Folders",
+                        progress.directories_scanned.to_string(),
+                        theme,
+                    ))
+                    .child(self.stat_card(
+                        "Accumulated",
+                        format_bytes(progress.bytes_scanned),
+                        theme,
+                    ))
+                    .child(self.stat_card("Last Run", duration, theme)),
             )
             .child(
                 div()
@@ -519,20 +665,20 @@ impl DiskAnalyzerApp {
                             .h(px(10.0))
                             .w_full()
                             .rounded_md()
-                            .bg(rgb(0x1f2937))
+                            .bg(rgb(theme.progress_track))
                             .child(
                                 div()
                                     .h_full()
                                     .w(relative(progress_fraction))
                                     .rounded_md()
-                                    .bg(rgb(0x10b981)),
+                                    .bg(rgb(theme.progress_fill)),
                             ),
                     )
                     .child(
                         div()
                             .flex()
                             .justify_between()
-                            .text_color(rgb(0xd1d5db))
+                            .text_color(rgb(theme.text_secondary))
                             .child(format!("Progress: {:.0}%", progress_fraction * 100.0))
                             .child(
                                 progress
@@ -549,28 +695,44 @@ impl DiskAnalyzerApp {
                     .justify_between()
                     .items_center()
                     .child(
-                        div().text_color(rgb(0xfbbf24)).child(
-                            "Keyboard: Enter/Space toggle, Del deletes, Shift+F10 opens menu",
+                        div().text_color(rgb(theme.text_muted)).child(
+                            "Keyboard: Enter/Space toggle, Del deletes, Shift+F10 opens menu, T changes theme",
                         ),
                     )
-                    .child(self.render_action_button(
-                        self.model.sort_mode.label(),
-                        true,
-                        0x374151,
-                        cx.listener(|this, _, _, cx| {
-                            this.model.toggle_sort_mode();
-                            cx.notify();
-                        }),
-                    )),
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(self.render_action_button(
+                                self.theme_preference.label(),
+                                true,
+                                theme.surface_alt_bg,
+                                theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.theme_preference = this.theme_preference.cycle();
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(self.render_action_button(
+                                self.model.sort_mode.label(),
+                                true,
+                                theme.surface_alt_bg,
+                                theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.model.toggle_sort_mode();
+                                    cx.notify();
+                                }),
+                            )),
+                    ),
             )
             .child(
                 div()
-                    .text_color(rgb(0x9ca3af))
+                    .text_color(rgb(theme.text_muted))
                     .child(self.model.status_message.clone()),
             )
     }
 
-    fn stat_card(&self, label: &str, value: String) -> impl IntoElement {
+    fn stat_card(&self, label: &str, value: String, theme: AppTheme) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -578,10 +740,16 @@ impl DiskAnalyzerApp {
             .px_3()
             .py_2()
             .rounded_md()
-            .bg(rgb(0x172033))
+            .bg(rgb(theme.surface_alt_bg))
+            .border_1()
+            .border_color(rgb(theme.border_subtle))
             .min_w(px(150.0))
-            .child(div().text_color(rgb(0x9ca3af)).child(label.to_string()))
-            .child(div().text_color(rgb(0xf9fafb)).child(value))
+            .child(
+                div()
+                    .text_color(rgb(theme.text_muted))
+                    .child(label.to_string()),
+            )
+            .child(div().text_color(rgb(theme.text_primary)).child(value))
     }
 
     fn render_menu_item(
@@ -589,6 +757,7 @@ impl DiskAnalyzerApp {
         label: &'static str,
         accent: u32,
         enabled: bool,
+        theme: AppTheme,
         on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         let mut item = div()
@@ -597,14 +766,22 @@ impl DiskAnalyzerApp {
             .rounded_sm()
             .border_1()
             .border_color(rgb(accent))
-            .bg(rgb(if enabled { 0x0f172a } else { 0x111827 }))
-            .text_color(rgb(if enabled { 0xf8fafc } else { 0x64748b }))
+            .bg(rgb(if enabled {
+                theme.surface_bg
+            } else {
+                theme.button_disabled_bg
+            }))
+            .text_color(rgb(if enabled {
+                theme.text_primary
+            } else {
+                theme.button_disabled_text
+            }))
             .child(label);
 
         if enabled {
             item = item
                 .cursor_pointer()
-                .hover(|style| style.bg(rgb(0x1e293b)))
+                .hover(|style| style.bg(rgb(theme.row_hover)))
                 .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                     on_click(event, window, cx)
                 });
@@ -613,7 +790,11 @@ impl DiskAnalyzerApp {
         item
     }
 
-    fn render_context_menu(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    fn render_context_menu(
+        &mut self,
+        cx: &mut Context<Self>,
+        theme: AppTheme,
+    ) -> Option<impl IntoElement> {
         let menu = self.context_menu?;
         let selected_label = self
             .model
@@ -634,45 +815,49 @@ impl DiskAnalyzerApp {
                     .p_2()
                     .rounded_md()
                     .border_1()
-                    .border_color(rgb(0x334155))
-                    .bg(rgb(0x020617))
+                    .border_color(rgb(theme.border))
+                    .bg(rgb(theme.menu_bg))
                     .shadow_lg()
                     .child(
                         div()
                             .px_2()
                             .pb_1()
-                            .text_color(rgb(0xfbbf24))
+                            .text_color(rgb(theme.text_secondary))
                             .child(format!("Actions for {selected_label}")),
                     )
                     .child(self.render_menu_item(
                         "Reveal in File Manager",
-                        0x0ea5e9,
+                        theme.accent,
                         has_selection,
+                        theme,
                         cx.listener(Self::invoke_context_reveal),
                     ))
                     .child(self.render_menu_item(
                         "Rescan Selected Subtree",
-                        0x8b5cf6,
+                        theme.accent,
                         has_selection,
+                        theme,
                         cx.listener(Self::invoke_context_rescan_selection),
                     ))
                     .child(self.render_menu_item(
                         "Rescan Root",
-                        0x2563eb,
+                        theme.accent,
                         has_root,
+                        theme,
                         cx.listener(Self::invoke_context_rescan_root),
                     ))
                     .child(self.render_menu_item(
                         "Delete",
-                        0xdc2626,
+                        theme.danger,
                         has_selection,
+                        theme,
                         cx.listener(Self::invoke_context_delete),
                     )),
             ),
         )
     }
 
-    fn render_tree(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_tree(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
         let row_count = self.model.visible_nodes().len();
         let focus_handle = self.focus_handle.clone();
 
@@ -687,7 +872,7 @@ impl DiskAnalyzerApp {
                 uniform_list(
                     "disk-tree",
                     row_count,
-                    cx.processor(|this, range, _window, cx| {
+                    cx.processor(move |this, range, _window, cx| {
                         let rows = this.model.visible_nodes();
                         let view = cx.entity().downgrade();
                         let mut elements = Vec::new();
@@ -713,8 +898,16 @@ impl DiskAnalyzerApp {
                                     "•"
                                 };
 
-                                let row_bg = if row.selected { 0x243144 } else { 0x0f172a };
-                                let name_color = if row.has_error { 0xfca5a5 } else { 0xf9fafb };
+                                let row_bg = if row.selected {
+                                    theme.selection_bg
+                                } else {
+                                    theme.row_bg
+                                };
+                                let name_color = if row.has_error {
+                                    theme.danger
+                                } else {
+                                    theme.text_primary
+                                };
 
                                 let mut row_div = div()
                                     .id(index)
@@ -726,8 +919,9 @@ impl DiskAnalyzerApp {
                                     .px_3()
                                     .bg(rgb(row_bg))
                                     .border_b_1()
-                                    .border_color(rgb(0x111827))
+                                    .border_color(rgb(theme.border_subtle))
                                     .cursor_pointer()
+                                    .hover(|style| style.bg(rgb(theme.row_hover)))
                                     .on_click(move |_, window, cx| {
                                         let _ = select_view.update(cx, |this, cx| {
                                             this.select_row(node_id, window, cx)
@@ -763,7 +957,11 @@ impl DiskAnalyzerApp {
                                                 .items_center()
                                                 .gap_2()
                                                 .pl(indent)
-                                                .child(div().text_color(rgb(0x60a5fa)).child(caret))
+                                                .child(
+                                                    div()
+                                                        .text_color(rgb(theme.accent))
+                                                        .child(caret),
+                                                )
                                                 .child(
                                                     div()
                                                         .text_color(rgb(name_color))
@@ -777,12 +975,12 @@ impl DiskAnalyzerApp {
                                                 .gap_2()
                                                 .child(
                                                     div()
-                                                        .text_color(rgb(0x94a3b8))
+                                                        .text_color(rgb(theme.text_muted))
                                                         .child(shorten_path(&row.path, 42)),
                                                 )
                                                 .child(
                                                     div()
-                                                        .text_color(rgb(0xfbbf24))
+                                                        .text_color(rgb(theme.text_secondary))
                                                         .child(format_bytes(row.recursive_size)),
                                                 ),
                                         ),
@@ -796,7 +994,7 @@ impl DiskAnalyzerApp {
                 .h_full(),
             );
 
-        if let Some(menu) = self.render_context_menu(cx) {
+        if let Some(menu) = self.render_context_menu(cx, theme) {
             tree = tree.child(menu);
         }
 
@@ -811,13 +1009,17 @@ impl Focusable for DiskAnalyzerApp {
 }
 
 impl Render for DiskAnalyzerApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_background_appearance(WindowBackgroundAppearance::Opaque);
+        let theme = AppTheme::from_window(window, self.theme_preference);
+
         div()
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(0x020617))
-            .child(self.render_header(cx))
-            .child(self.render_tree(cx))
+            .bg(rgb(theme.app_bg))
+            .text_color(rgb(theme.text_primary))
+            .child(self.render_header(cx, theme))
+            .child(self.render_tree(cx, theme))
     }
 }
