@@ -11,6 +11,27 @@ use crate::scanner::ScanRequest;
 use super::DiskAnalyzerApp;
 
 impl DiskAnalyzerApp {
+    pub(super) fn cancel_scan_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_scan_action(cx);
+    }
+
+    pub(super) fn cancel_scan_action(&mut self, cx: &mut Context<Self>) {
+        let Some(active_scan) = &self.active_scan else {
+            self.model.status_message = String::from("No scan is currently running.");
+            cx.notify();
+            return;
+        };
+
+        active_scan.cancel();
+        self.model.status_message = String::from("Cancelling scan...");
+        cx.notify();
+    }
+
     pub(super) fn choose_directory_impl(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus_handle);
         let picker = cx.prompt_for_paths(PathPromptOptions {

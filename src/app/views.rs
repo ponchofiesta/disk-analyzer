@@ -590,6 +590,11 @@ impl DiskAnalyzerApp {
     }
 
     fn render_header(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
+        let is_scanning = self
+            .model
+            .scan_state
+            .as_ref()
+            .is_some_and(|state| !state.progress.finished);
         let root_text = self
             .model
             .active_root_path()
@@ -606,15 +611,25 @@ impl DiskAnalyzerApp {
                 div()
                     .flex()
                     .gap_4()
-                    .child(
+                    .child(if is_scanning {
+                        Button::new("cancel-scan")
+                            .label("Cancel")
+                            .icon(IconName::Close)
+                            .with_size(Size::Medium)
+                            .compact()
+                            .danger()
+                            .on_click(cx.listener(Self::cancel_scan_click))
+                            .into_any_element()
+                    } else {
                         Button::new("choose-folder")
                             .label("Choose Folder")
                             .icon(IconName::FolderOpen)
                             .with_size(Size::Medium)
                             .compact()
-                            .outline()
-                            .on_click(cx.listener(Self::choose_directory_click)),
-                    )
+                            .primary()
+                            .on_click(cx.listener(Self::choose_directory_click))
+                            .into_any_element()
+                    })
                     .child(div().text_color(rgb(theme.text_muted)).child(root_text)),
             )
             .child(self.render_status_pill(theme))
