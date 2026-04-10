@@ -841,20 +841,11 @@ impl DiskAnalyzerApp {
                                                         .text_color(rgb(theme.accent)),
                                                 )
                                                 .child(
-                                                    div()
-                                                        .flex()
-                                                        .flex_col()
-                                                        .gap_0p5()
-                                                        .child(
-                                                            div()
-                                                                .text_color(rgb(name_color))
-                                                                .child(row.name),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_color(rgb(theme.text_muted))
-                                                                .child(shorten_path(&row.path, 56)),
-                                                        ),
+                                                    div().flex().flex_col().gap_0p5().child(
+                                                        div()
+                                                            .text_color(rgb(name_color))
+                                                            .child(row.name),
+                                                    ),
                                                 ),
                                         )
                                         .child(
