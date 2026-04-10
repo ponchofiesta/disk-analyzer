@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 
@@ -29,6 +29,7 @@ pub struct DiscoveredEntry {
     pub parent_path: Option<PathBuf>,
     pub kind: EntryKind,
     pub size: u64,
+    pub modified_at: Option<SystemTime>,
     pub error: Option<String>,
 }
 
@@ -215,6 +216,7 @@ fn run_standard_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled:
                         parent_path: Some(directory.clone()),
                         kind: EntryKind::Other,
                         size: 0,
+                        modified_at: None,
                         error: Some(error.to_string()),
                     });
                     maybe_flush(
@@ -230,6 +232,7 @@ fn run_standard_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled:
             };
 
             let file_type = metadata.file_type();
+            let modified_at = metadata.modified().ok();
             if file_type.is_dir() && !file_type.is_symlink() {
                 progress.directories_discovered += 1;
                 stack.push(path.clone());
@@ -238,6 +241,7 @@ fn run_standard_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled:
                     parent_path: Some(directory.clone()),
                     kind: EntryKind::Directory,
                     size: 0,
+                    modified_at,
                     error: None,
                 });
             } else if file_type.is_file() {
@@ -248,6 +252,7 @@ fn run_standard_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled:
                     parent_path: Some(directory.clone()),
                     kind: EntryKind::File,
                     size: metadata.len(),
+                    modified_at,
                     error: None,
                 });
             } else if file_type.is_symlink() {
@@ -256,6 +261,7 @@ fn run_standard_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled:
                     parent_path: Some(directory.clone()),
                     kind: EntryKind::Symlink,
                     size: 0,
+                    modified_at,
                     error: None,
                 });
             } else {
@@ -264,6 +270,7 @@ fn run_standard_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled:
                     parent_path: Some(directory.clone()),
                     kind: EntryKind::Other,
                     size: 0,
+                    modified_at,
                     error: None,
                 });
             }

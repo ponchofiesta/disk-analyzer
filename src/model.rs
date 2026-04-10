@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::scanner::{DiscoveredEntry, EntryKind, ScanBatch, ScanEvent, ScanRequest, ScanSummary};
 
@@ -60,6 +61,8 @@ pub struct TreeNode {
     pub kind: NodeKind,
     pub depth: usize,
     pub recursive_size: u64,
+    pub file_count: u64,
+    pub modified_at: Option<SystemTime>,
     pub children: Vec<NodeId>,
     pub last_error: Option<String>,
     pub removed: bool,
@@ -70,9 +73,10 @@ pub struct VisibleNode {
     pub id: NodeId,
     pub depth: usize,
     pub name: String,
-    pub path: PathBuf,
     pub kind: NodeKind,
     pub recursive_size: u64,
+    pub file_count: u64,
+    pub modified_at: Option<SystemTime>,
     pub selected: bool,
     pub expanded: bool,
     pub has_children: bool,
@@ -271,14 +275,26 @@ impl AppModel {
     fn begin_scan(&mut self, request: ScanRequest) {
         self.status_message = format!("Scanning {}", request.target.display());
         self.warnings.clear();
+        let root_modified_at = fs::metadata(&request.target)
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
 
         if request.is_root_scan() {
             self.clear_all();
-            let root_id = self.insert_node(None, request.target.clone(), NodeKind::Directory, None);
+            let root_id = self.insert_node(
+                None,
+                request.target.clone(),
+                NodeKind::Directory,
+                root_modified_at,
+                None,
+            );
             self.root = Some(root_id);
             self.selected = Some(root_id);
             self.expanded.insert(root_id);
         } else if self.path_index.contains_key(&request.target) {
+            if let Some(target_id) = self.path_index.get(&request.target).copied() {
+                self.nodes[target_id].modified_at = root_modified_at;
+            }
             self.reset_subtree_for_rescan(&request.target);
         }
 
@@ -375,6 +391,7 @@ impl AppModel {
         }
 
         let removed_size = self.nodes[target_id].recursive_size;
+        let removed_file_count = self.nodes[target_id].file_count;
         let children = self.nodes[target_id].children.clone();
         for child_id in children {
             self.mark_removed(child_id);
@@ -382,10 +399,12 @@ impl AppModel {
 
         self.nodes[target_id].children.clear();
         self.nodes[target_id].recursive_size = 0;
+        self.nodes[target_id].file_count = 0;
         self.nodes[target_id].last_error = None;
 
         if let Some(parent_id) = self.nodes[target_id].parent {
             self.propagate_size_delta(Some(parent_id), -(removed_size as i128));
+            self.propagate_file_count_delta(Some(parent_id), -(removed_file_count as i128));
         }
     }
 
@@ -425,21 +444,29 @@ impl AppModel {
                 parent_id,
                 entry.path.clone(),
                 node_kind,
+                entry.modified_at,
                 entry.error.clone(),
             )
         };
 
         if let Some(node) = self.nodes.get_mut(node_id) {
             node.kind = node_kind;
+            node.modified_at = entry.modified_at;
             node.last_error = entry.error;
         }
 
         if node_kind == NodeKind::File {
             let old_size = self.nodes[node_id].recursive_size;
+            let old_file_count = self.nodes[node_id].file_count;
             let new_size = entry.size;
             let delta = new_size as i128 - old_size as i128;
             self.nodes[node_id].recursive_size = new_size;
+            self.nodes[node_id].file_count = 1;
             self.propagate_size_delta(self.nodes[node_id].parent, delta);
+            self.propagate_file_count_delta(
+                self.nodes[node_id].parent,
+                self.nodes[node_id].file_count as i128 - old_file_count as i128,
+            );
         }
     }
 
@@ -448,6 +475,7 @@ impl AppModel {
         parent_id: Option<NodeId>,
         path: PathBuf,
         kind: NodeKind,
+        modified_at: Option<SystemTime>,
         error: Option<String>,
     ) -> NodeId {
         let depth = parent_id.map(|id| self.nodes[id].depth + 1).unwrap_or(0);
@@ -465,6 +493,8 @@ impl AppModel {
             kind,
             depth,
             recursive_size: 0,
+            file_count: 0,
+            modified_at,
             children: Vec::new(),
             last_error: error,
             removed: false,
@@ -499,6 +529,22 @@ impl AppModel {
         }
     }
 
+    fn propagate_file_count_delta(&mut self, mut current: Option<NodeId>, delta: i128) {
+        if delta == 0 {
+            return;
+        }
+
+        while let Some(node_id) = current {
+            let node = &mut self.nodes[node_id];
+            if delta.is_negative() {
+                node.file_count = node.file_count.saturating_sub(delta.unsigned_abs() as u64);
+            } else {
+                node.file_count = node.file_count.saturating_add(delta as u64);
+            }
+            current = node.parent;
+        }
+    }
+
     fn push_visible(&self, node_id: NodeId, depth: usize, rows: &mut Vec<VisibleNode>) {
         let Some(node) = self.nodes.get(node_id) else {
             return;
@@ -511,9 +557,10 @@ impl AppModel {
             id: node.id,
             depth,
             name: node.name.clone(),
-            path: node.path.clone(),
             kind: node.kind,
             recursive_size: node.recursive_size,
+            file_count: node.file_count,
+            modified_at: node.modified_at,
             selected: self.selected == Some(node.id),
             expanded: self.expanded.contains(&node.id),
             has_children: node

@@ -4,12 +4,13 @@ use gpui::{
 };
 use gpui_component::{
     button::{Button, ButtonVariants},
+    progress::Progress,
     spinner::Spinner,
     Disableable, Icon, IconName, Sizable, Size,
 };
 
 use crate::model::NodeKind;
-use crate::ui::{format_bytes, format_duration, shorten_path};
+use crate::ui::{format_bytes, format_duration, format_modified_time, shorten_path, shorten_text};
 
 use super::{theme::AppTheme, DiskAnalyzerApp};
 
@@ -419,6 +420,59 @@ impl DiskAnalyzerApp {
             )
     }
 
+    fn root_total_size(&self) -> u64 {
+        self.model
+            .root
+            .and_then(|root| self.model.nodes.get(root))
+            .map(|node| node.recursive_size)
+            .unwrap_or(0)
+    }
+
+    fn render_table_header(&self, theme: AppTheme) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .px_3()
+            .py_2()
+            .bg(rgb(theme.elevated_alt_bg))
+            .border_b_1()
+            .border_color(rgb(theme.border_subtle))
+            .child(
+                div()
+                    .flex_1()
+                    .text_color(rgb(theme.text_secondary))
+                    .child("Tree"),
+            )
+            .child(
+                div()
+                    .w(px(120.0))
+                    .text_right()
+                    .text_color(rgb(theme.text_secondary))
+                    .child("Size"),
+            )
+            .child(
+                div()
+                    .w(px(90.0))
+                    .text_right()
+                    .text_color(rgb(theme.text_secondary))
+                    .child("Files"),
+            )
+            .child(
+                div()
+                    .w(px(190.0))
+                    .text_color(rgb(theme.text_secondary))
+                    .child("Share"),
+            )
+            .child(
+                div()
+                    .w(px(150.0))
+                    .text_right()
+                    .text_color(rgb(theme.text_secondary))
+                    .child("Modified"),
+            )
+    }
+
     fn render_details_pane(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
         let selected = self.model.selected_node().cloned();
         let warning_text = self.model.warnings.last().cloned();
@@ -523,8 +577,18 @@ impl DiskAnalyzerApp {
                             theme,
                         ))
                         .child(self.render_info_row(
+                            "Files",
+                            node.file_count.to_string(),
+                            theme,
+                        ))
+                        .child(self.render_info_row(
                             "Children",
                             self.selected_children_count().to_string(),
+                            theme,
+                        ))
+                        .child(self.render_info_row(
+                            "Modified",
+                            format_modified_time(node.modified_at),
                             theme,
                         ))
                         .child(self.render_info_row(
@@ -740,6 +804,7 @@ impl DiskAnalyzerApp {
     fn render_tree(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
         let row_count = self.model.visible_nodes().len();
         let focus_handle = self.focus_handle.clone();
+        let root_total_size = self.root_total_size();
 
         let mut tree = div()
             .flex()
@@ -765,6 +830,7 @@ impl DiskAnalyzerApp {
                             .child("Right click for actions"),
                     ),
             )
+            .child(self.render_table_header(theme))
             .child(
                 gpui::uniform_list(
                     "disk-tree",
@@ -803,14 +869,21 @@ impl DiskAnalyzerApp {
                                 } else {
                                     theme.text_primary
                                 };
+                                let share_percent = if root_total_size == 0 {
+                                    0.0
+                                } else {
+                                    ((row.recursive_size as f64 / root_total_size as f64) * 100.0)
+                                        .clamp(0.0, 100.0)
+                                        as f32
+                                };
 
                                 let row_div = div()
                                     .id(index)
-                                    .h(px(44.0))
+                                    .h(px(48.0))
                                     .w_full()
                                     .flex()
-                                    .justify_between()
                                     .items_center()
+                                    .gap_3()
                                     .px_3()
                                     .bg(rgb(row_bg))
                                     .border_b_1()
@@ -868,6 +941,7 @@ impl DiskAnalyzerApp {
                                     row_div
                                         .child(
                                             div()
+                                                .flex_1()
                                                 .flex()
                                                 .items_center()
                                                 .gap_2()
@@ -882,31 +956,54 @@ impl DiskAnalyzerApp {
                                                     div().flex().flex_col().gap_0p5().child(
                                                         div()
                                                             .text_color(rgb(name_color))
-                                                            .child(row.name),
+                                                            .child(shorten_text(&row.name, 42)),
                                                     ),
                                                 ),
                                         )
                                         .child(
+                                            div().w(px(120.0)).text_right().child(
+                                                div()
+                                                    .text_color(rgb(theme.text_secondary))
+                                                    .child(format_bytes(row.recursive_size)),
+                                            ),
+                                        )
+                                        .child(
                                             div()
+                                                .w(px(90.0))
+                                                .text_right()
+                                                .text_color(rgb(theme.text_secondary))
+                                                .child(row.file_count.to_string()),
+                                        )
+                                        .child(
+                                            div()
+                                                .w(px(190.0))
                                                 .flex()
                                                 .items_center()
-                                                .gap_3()
+                                                .gap_2()
+                                                .child(
+                                                    Progress::new()
+                                                        .value(share_percent)
+                                                        .h(px(8.0))
+                                                        .flex_1(),
+                                                )
                                                 .child(
                                                     div()
-                                                        .text_color(rgb(theme.text_secondary))
-                                                        .child(format_bytes(row.recursive_size)),
-                                                )
-                                                .when(row.has_error, |this| {
-                                                    this.child(
-                                                        div()
-                                                            .px_2()
-                                                            .py_1()
-                                                            .rounded_full()
-                                                            .bg(rgb(theme.accent_soft))
-                                                            .text_color(rgb(theme.danger))
-                                                            .child("Error"),
-                                                    )
-                                                }),
+                                                        .min_w(px(48.0))
+                                                        .text_right()
+                                                        .text_color(rgb(theme.text_muted))
+                                                        .child(format!("{share_percent:.1}%")),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .w(px(150.0))
+                                                .text_right()
+                                                .text_color(rgb(if row.has_error {
+                                                    theme.danger
+                                                } else {
+                                                    theme.text_muted
+                                                }))
+                                                .child(format_modified_time(row.modified_at)),
                                         ),
                                 );
                             }

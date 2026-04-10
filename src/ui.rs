@@ -1,5 +1,7 @@
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
+
+use time::{format_description, OffsetDateTime, UtcOffset};
 
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -30,11 +32,34 @@ pub fn format_duration(duration: Duration) -> String {
 
 pub fn shorten_path(path: &Path, max_chars: usize) -> String {
     let display = path.display().to_string();
-    if display.len() <= max_chars {
-        return display;
+    shorten_text(&display, max_chars)
+}
+
+pub fn shorten_text(text: &str, max_chars: usize) -> String {
+    if text.len() <= max_chars {
+        return text.to_string();
     }
 
     let keep = max_chars.saturating_sub(3);
-    let suffix = &display[display.len().saturating_sub(keep)..];
+    let suffix = &text[text.len().saturating_sub(keep)..];
     format!("...{suffix}")
+}
+
+pub fn format_modified_time(modified_at: Option<SystemTime>) -> String {
+    let Some(modified_at) = modified_at else {
+        return String::from("Unknown");
+    };
+
+    let Ok(format) = format_description::parse("[year]-[month]-[day] [hour]:[minute]") else {
+        return String::from("Unknown");
+    };
+
+    let datetime = OffsetDateTime::from(modified_at);
+    let localized = UtcOffset::current_local_offset()
+        .map(|offset| datetime.to_offset(offset))
+        .unwrap_or(datetime);
+
+    localized
+        .format(&format)
+        .unwrap_or_else(|_| String::from("Unknown"))
 }

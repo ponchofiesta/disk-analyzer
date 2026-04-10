@@ -4,7 +4,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::Sender;
 use windows::core::PCWSTR;
@@ -12,7 +12,7 @@ use windows::Win32::Foundation::{
     GetLastError, ERROR_ACCESS_DENIED, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows::Win32::Storage::FileSystem::{
-    FindClose, FindFirstFileExW, FindNextFileW, FindExInfoBasic, FindExSearchNameMatch,
+    FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FIND_FIRST_EX_LARGE_FETCH,
     WIN32_FIND_DATAW,
 };
@@ -137,7 +137,11 @@ fn run_find_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled: Arc
 
             let error = unsafe { GetLastError() };
             if error != ERROR_NO_MORE_FILES && error != ERROR_ACCESS_DENIED {
-                warnings.push(format!("{}: {}", directory.path.display(), os_error_message(error)));
+                warnings.push(format!(
+                    "{}: {}",
+                    directory.path.display(),
+                    os_error_message(error)
+                ));
             }
             break;
         }
@@ -193,6 +197,10 @@ fn process_find_data(
             parent_path: Some(directory.path.clone()),
             kind: EntryKind::Directory,
             size: 0,
+            modified_at: system_time_from_filetime(
+                find_data.ftLastWriteTime.dwHighDateTime,
+                find_data.ftLastWriteTime.dwLowDateTime,
+            ),
             error: None,
         });
         return;
@@ -206,6 +214,10 @@ fn process_find_data(
         parent_path: Some(directory.path.clone()),
         kind: EntryKind::File,
         size,
+        modified_at: system_time_from_filetime(
+            find_data.ftLastWriteTime.dwHighDateTime,
+            find_data.ftLastWriteTime.dwLowDateTime,
+        ),
         error: None,
     });
 }
@@ -223,6 +235,17 @@ fn os_error_message(error: windows::Win32::Foundation::WIN32_ERROR) -> String {
     std::io::Error::from_raw_os_error(error.0 as i32).to_string()
 }
 
+fn system_time_from_filetime(high: u32, low: u32) -> Option<SystemTime> {
+    const WINDOWS_TO_UNIX_TICKS: u64 = 116_444_736_000_000_000;
+
+    let ticks = ((high as u64) << 32) | low as u64;
+    if ticks < WINDOWS_TO_UNIX_TICKS {
+        return None;
+    }
+
+    Some(UNIX_EPOCH + Duration::from_nanos((ticks - WINDOWS_TO_UNIX_TICKS) * 100))
+}
+
 fn path_to_wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().collect()
 }
@@ -230,7 +253,10 @@ fn path_to_wide(path: &Path) -> Vec<u16> {
 fn build_search_pattern(path: &[u16]) -> Vec<u16> {
     let mut pattern = Vec::with_capacity(path.len() + 3);
     pattern.extend_from_slice(path);
-    if !path.last().is_some_and(|ch| *ch == b'\\' as u16 || *ch == b'/' as u16) {
+    if !path
+        .last()
+        .is_some_and(|ch| *ch == b'\\' as u16 || *ch == b'/' as u16)
+    {
         pattern.push(b'\\' as u16);
     }
     pattern.push(b'*' as u16);
@@ -241,7 +267,10 @@ fn build_search_pattern(path: &[u16]) -> Vec<u16> {
 fn join_path(parent: &[u16], child_name: &[u16]) -> Vec<u16> {
     let mut joined = Vec::with_capacity(parent.len() + child_name.len() + 1);
     joined.extend_from_slice(parent);
-    if !parent.last().is_some_and(|ch| *ch == b'\\' as u16 || *ch == b'/' as u16) {
+    if !parent
+        .last()
+        .is_some_and(|ch| *ch == b'\\' as u16 || *ch == b'/' as u16)
+    {
         joined.push(b'\\' as u16);
     }
     joined.extend_from_slice(child_name);
