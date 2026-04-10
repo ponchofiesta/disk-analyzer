@@ -8,6 +8,7 @@ use gpui::{
 use crate::platform::{reveal_in_file_manager, trash_path};
 use crate::scanner::ScanRequest;
 
+use super::theme::apply_theme_preference;
 use super::DiskAnalyzerApp;
 
 impl DiskAnalyzerApp {
@@ -159,10 +160,11 @@ impl DiskAnalyzerApp {
     pub(super) fn toggle_theme_click(
         &mut self,
         _: &ClickEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.theme_preference = self.theme_preference.cycle();
+        apply_theme_preference(self.theme_preference, window, cx);
         cx.notify();
     }
 
@@ -217,7 +219,8 @@ impl DiskAnalyzerApp {
             "space" => self.toggle_selected(cx),
             "f5" => self.rescan_root_action(cx),
             "t" if !event.keystroke.modifiers.control && !event.keystroke.modifiers.platform => {
-                self.theme_preference = self.theme_preference.cycle()
+                self.theme_preference = self.theme_preference.cycle();
+                apply_theme_preference(self.theme_preference, window, cx);
             }
             "r" if !event.keystroke.modifiers.control && !event.keystroke.modifiers.platform => {
                 self.rescan_selected_action(cx)

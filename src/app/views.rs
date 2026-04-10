@@ -1,5 +1,5 @@
 use gpui::{
-    actions, div, prelude::*, px, rgb, App, Context, FocusHandle, Focusable, MouseButton, Render,
+    actions, div, prelude::*, px, App, Context, FocusHandle, Focusable, MouseButton, Render,
     WeakEntity, Window, WindowBackgroundAppearance,
 };
 use gpui_component::{
@@ -8,13 +8,13 @@ use gpui_component::{
     progress::Progress,
     spinner::Spinner,
     table::{Column, ColumnSort, Table, TableDelegate, TableEvent, TableState},
-    Icon, IconName, Sizable, Size, TitleBar,
+    ActiveTheme, Icon, IconName, Sizable, Size, TitleBar,
 };
 
 use crate::model::{NodeKind, SortMode, VisibleNode};
 use crate::ui::{format_bytes, format_duration, format_modified_time, shorten_path, shorten_text};
 
-use super::{theme::AppTheme, DiskAnalyzerApp};
+use super::{theme::apply_theme_preference, DiskAnalyzerApp};
 
 actions!(
     results_table_menu,
@@ -150,11 +150,10 @@ impl TableDelegate for ResultsTableDelegate {
         &mut self,
         row_ix: usize,
         col_ix: usize,
-        window: &mut Window,
+        _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let row = &self.rows[row_ix];
-        let theme = AppTheme::from_window(window, self.theme_preference);
         let share_percent = self.share_percent(row.recursive_size);
 
         match col_ix {
@@ -173,12 +172,6 @@ impl TableDelegate for ResultsTableDelegate {
                     NodeKind::Symlink => IconName::ExternalLink,
                     NodeKind::Other => IconName::Frame,
                 };
-                let name_color = if row.has_error {
-                    theme.danger
-                } else {
-                    theme.text_primary
-                };
-
                 let toggle = if row.kind.is_directory() && row.has_children {
                     let app = self.app.clone();
                     div()
@@ -187,7 +180,7 @@ impl TableDelegate for ResultsTableDelegate {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .hover(|style| style.bg(rgb(theme.elevated_alt_bg)))
+                        .hover(|style| style.bg(_cx.theme().secondary))
                         .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                             cx.stop_propagation();
                             let _ = app.update(cx, |app, cx| app.toggle_row(node_id, window, cx));
@@ -199,7 +192,7 @@ impl TableDelegate for ResultsTableDelegate {
                                 IconName::ChevronRight
                             })
                             .with_size(Size::XSmall)
-                            .text_color(rgb(theme.text_muted)),
+                            .text_color(_cx.theme().muted_foreground),
                         )
                         .into_any_element()
                 } else {
@@ -216,12 +209,20 @@ impl TableDelegate for ResultsTableDelegate {
                     .child(
                         Icon::new(icon)
                             .with_size(Size::Small)
-                            .text_color(rgb(theme.accent)),
+                            .text_color(if row.has_error {
+                                _cx.theme().danger
+                            } else {
+                                _cx.theme().primary
+                            }),
                     )
                     .child(
                         div().flex().flex_col().gap_0p5().child(
                             div()
-                                .text_color(rgb(name_color))
+                                .text_color(if row.has_error {
+                                    _cx.theme().danger
+                                } else {
+                                    _cx.theme().foreground
+                                })
                                 .child(shorten_text(&row.name, 42)),
                         ),
                     )
@@ -230,13 +231,13 @@ impl TableDelegate for ResultsTableDelegate {
             1 => div()
                 .size_full()
                 .text_right()
-                .text_color(rgb(theme.text_secondary))
+                .text_color(_cx.theme().foreground)
                 .child(format_bytes(row.recursive_size))
                 .into_any_element(),
             2 => div()
                 .size_full()
                 .text_right()
-                .text_color(rgb(theme.text_secondary))
+                .text_color(_cx.theme().foreground)
                 .child(row.file_count.to_string())
                 .into_any_element(),
             3 => div()
@@ -249,18 +250,18 @@ impl TableDelegate for ResultsTableDelegate {
                     div()
                         .min_w(px(48.0))
                         .text_right()
-                        .text_color(rgb(theme.text_muted))
+                        .text_color(_cx.theme().muted_foreground)
                         .child(format!("{share_percent:.1}%")),
                 )
                 .into_any_element(),
             4 => div()
                 .size_full()
                 .text_right()
-                .text_color(rgb(if row.has_error {
-                    theme.danger
+                .text_color(if row.has_error {
+                    _cx.theme().danger
                 } else {
-                    theme.text_muted
-                }))
+                    _cx.theme().muted_foreground
+                })
                 .child(format_modified_time(row.modified_at))
                 .into_any_element(),
             _ => div().into_any_element(),
@@ -399,22 +400,22 @@ impl DiskAnalyzerApp {
         }
     }
 
-    fn scan_state_color(&self, theme: AppTheme) -> u32 {
+    fn scan_state_color(&self, cx: &App) -> gpui::Hsla {
         match self.model.scan_state.as_ref() {
-            Some(state) if !state.progress.finished => theme.accent,
-            Some(_) => theme.success,
-            None => theme.text_muted,
+            Some(state) if !state.progress.finished => cx.theme().primary,
+            Some(_) => cx.theme().success,
+            None => cx.theme().muted_foreground,
         }
     }
 
-    fn render_status_pill(&self, theme: AppTheme) -> impl IntoElement {
+    fn render_status_pill(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .px_2()
             .py_1()
             .rounded_full()
-            .bg(rgb(theme.accent_soft))
+            .bg(cx.theme().secondary)
             .border_1()
-            .border_color(rgb(theme.border_subtle))
+            .border_color(cx.theme().border)
             .child(
                 div()
                     .flex()
@@ -431,26 +432,26 @@ impl DiskAnalyzerApp {
                                 Spinner::new()
                                     .icon(IconName::LoaderCircle)
                                     .with_size(Size::Small)
-                                    .color(rgb(theme.accent).into()),
+                                    .color(cx.theme().primary),
                             )
                         } else {
                             div().child(
                                 Icon::new(IconName::CircleCheck)
                                     .with_size(Size::Small)
-                                    .text_color(rgb(self.scan_state_color(theme))),
+                                    .text_color(self.scan_state_color(cx)),
                             )
                         },
                     )
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(theme.text_secondary))
+                            .text_color(cx.theme().foreground)
                             .child(self.scan_state_label()),
                     ),
             )
     }
 
-    fn render_title_bar(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
+    fn render_title_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         TitleBar::new().child(
             div()
                 .flex()
@@ -470,21 +471,21 @@ impl DiskAnalyzerApp {
                             div()
                                 .size(px(24.0))
                                 .rounded_md()
-                                .bg(rgb(theme.accent_soft))
+                                .bg(cx.theme().secondary)
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .child(
                                     Icon::new(IconName::ChartPie)
                                         .with_size(Size::XSmall)
-                                        .text_color(rgb(theme.accent)),
+                                        .text_color(cx.theme().primary),
                                 ),
                         )
                         .child(
                             div().flex().min_w_0().child(
                                 div()
                                     .text_sm()
-                                    .text_color(rgb(theme.text_primary))
+                                    .text_color(cx.theme().foreground)
                                     .child("Disk Analyzer"),
                             ),
                         ),
@@ -501,7 +502,7 @@ impl DiskAnalyzerApp {
         )
     }
 
-    fn render_header(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
+    fn render_header(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_scanning = self
             .model
             .scan_state
@@ -518,7 +519,7 @@ impl DiskAnalyzerApp {
             .justify_between()
             .gap_4()
             .p_4()
-            .bg(rgb(theme.panel_bg))
+            .bg(cx.theme().background)
             .child(
                 div()
                     .flex()
@@ -542,9 +543,13 @@ impl DiskAnalyzerApp {
                             .on_click(cx.listener(Self::choose_directory_click))
                             .into_any_element()
                     })
-                    .child(div().text_color(rgb(theme.text_muted)).child(root_text)),
+                    .child(
+                        div()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(root_text),
+                    ),
             )
-            .child(self.render_status_pill(theme))
+            .child(self.render_status_pill(cx))
     }
 
     fn root_total_size(&self) -> u64 {
@@ -555,7 +560,7 @@ impl DiskAnalyzerApp {
             .unwrap_or(0)
     }
 
-    fn render_tree(&mut self, cx: &mut Context<Self>, _theme: AppTheme) -> impl IntoElement {
+    fn render_tree(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_results_table(cx);
         let table = self
             .results_table
@@ -589,20 +594,20 @@ impl Focusable for DiskAnalyzerApp {
 impl Render for DiskAnalyzerApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_background_appearance(WindowBackgroundAppearance::Opaque);
-        let theme = AppTheme::from_window(window, self.theme_preference);
+        apply_theme_preference(self.theme_preference, window, cx);
         self.ensure_results_table(window, cx);
 
         div()
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(theme.app_bg))
-            .text_color(rgb(theme.text_primary))
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .on_action(cx.listener(Self::menu_reveal_action))
             .on_action(cx.listener(Self::menu_rescan_selection_action))
             .on_action(cx.listener(Self::menu_delete_action))
-            .child(self.render_title_bar(cx, theme))
-            .child(self.render_header(cx, theme))
+            .child(self.render_title_bar(cx))
+            .child(self.render_header(cx))
             .child(
                 div().flex().flex_1().min_h_0().child(
                     div().flex_1().min_w_0().p_3().child(
@@ -610,10 +615,10 @@ impl Render for DiskAnalyzerApp {
                             .size_full()
                             .rounded_lg()
                             .overflow_hidden()
-                            .bg(rgb(theme.panel_bg))
+                            .bg(cx.theme().background)
                             .border_1()
-                            .border_color(rgb(theme.border_subtle))
-                            .child(self.render_tree(cx, theme)),
+                            .border_color(cx.theme().border)
+                            .child(self.render_tree(cx)),
                     ),
                 ),
             )
