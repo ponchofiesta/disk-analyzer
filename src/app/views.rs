@@ -1,6 +1,6 @@
 use gpui::{
-    actions, anchored, div, prelude::*, px, rgb, App, Context, FocusHandle, Focusable, MouseButton,
-    MouseDownEvent, Render, WeakEntity, Window, WindowBackgroundAppearance,
+    actions, div, prelude::*, px, rgb, App, Context, FocusHandle, Focusable, MouseButton, Render,
+    WeakEntity, Window, WindowBackgroundAppearance,
 };
 use gpui_component::{
     button::{Button, ButtonVariants},
@@ -18,12 +18,7 @@ use super::{theme::AppTheme, DiskAnalyzerApp};
 
 actions!(
     results_table_menu,
-    [
-        RevealSelection,
-        RescanSelection,
-        RescanRoot,
-        DeleteSelection
-    ]
+    [RevealSelection, RescanSelection, DeleteSelection]
 );
 
 pub(super) type ResultsTableState = TableState<ResultsTableDelegate>;
@@ -290,12 +285,7 @@ impl TableDelegate for ResultsTableDelegate {
 
         menu.action_context(self.focus_handle.clone())
             .menu_with_enable("Reveal in File Manager", Box::new(RevealSelection), true)
-            .menu_with_enable("Rescan Selected Subtree", Box::new(RescanSelection), true)
-            .menu_with_enable(
-                "Rescan Root",
-                Box::new(RescanRoot),
-                self.root_total_size > 0,
-            )
+            .menu_with_enable("Rescan", Box::new(RescanSelection), true)
             .menu_with_enable("Delete", Box::new(DeleteSelection), true)
     }
 }
@@ -331,7 +321,6 @@ impl DiskAnalyzerApp {
                         .map(|row| row.id);
                     if let Some(node_id) = node_id {
                         this.model.select(node_id);
-                        this.close_context_menu_state();
                         cx.notify();
                     }
                 }
@@ -385,10 +374,6 @@ impl DiskAnalyzerApp {
         cx: &mut Context<Self>,
     ) {
         self.rescan_selected_action(cx);
-    }
-
-    fn menu_rescan_root_action(&mut self, _: &RescanRoot, _: &mut Window, cx: &mut Context<Self>) {
-        self.rescan_root_action(cx);
     }
 
     fn menu_delete_action(
@@ -570,124 +555,7 @@ impl DiskAnalyzerApp {
             .unwrap_or(0)
     }
 
-    fn render_menu_item(
-        &self,
-        label: &'static str,
-        icon: IconName,
-        accent: u32,
-        enabled: bool,
-        theme: AppTheme,
-        on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
-        let mut item = div()
-            .px_3()
-            .py_2()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(if enabled { accent } else { theme.border_subtle }))
-            .bg(rgb(if enabled {
-                theme.elevated_bg
-            } else {
-                theme.elevated_alt_bg
-            }))
-            .text_color(rgb(if enabled {
-                theme.text_primary
-            } else {
-                theme.text_muted
-            }))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(Icon::new(icon).with_size(Size::Small))
-                    .child(label),
-            );
-
-        if enabled {
-            item = item
-                .cursor_pointer()
-                .hover(|style| style.bg(rgb(theme.row_hover)))
-                .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                    on_click(event, window, cx)
-                });
-        }
-
-        item
-    }
-
-    fn render_context_menu(
-        &mut self,
-        cx: &mut Context<Self>,
-        theme: AppTheme,
-    ) -> Option<impl IntoElement> {
-        let menu = self.context_menu?;
-        let selected_label = self
-            .model
-            .nodes
-            .get(menu.node_id)
-            .map(|node| node.name.clone())
-            .unwrap_or_else(|| String::from("Selection"));
-        let has_selection = self.model.selected_path().is_some();
-        let has_root = self.model.active_root_path().is_some();
-
-        Some(
-            anchored().position(menu.position).snap_to_window().child(
-                div()
-                    .w(px(240.0))
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .p_2()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(rgb(theme.border))
-                    .bg(rgb(theme.menu_bg))
-                    .shadow_lg()
-                    .child(
-                        div()
-                            .px_2()
-                            .pb_1()
-                            .text_color(rgb(theme.text_secondary))
-                            .child(format!("Actions for {selected_label}")),
-                    )
-                    .child(self.render_menu_item(
-                        "Reveal in File Manager",
-                        IconName::ExternalLink,
-                        theme.accent,
-                        has_selection,
-                        theme,
-                        cx.listener(Self::invoke_context_reveal),
-                    ))
-                    .child(self.render_menu_item(
-                        "Rescan Selected Subtree",
-                        IconName::Redo2,
-                        theme.accent,
-                        has_selection,
-                        theme,
-                        cx.listener(Self::invoke_context_rescan_selection),
-                    ))
-                    .child(self.render_menu_item(
-                        "Rescan Root",
-                        IconName::Redo,
-                        theme.accent,
-                        has_root,
-                        theme,
-                        cx.listener(Self::invoke_context_rescan_root),
-                    ))
-                    .child(self.render_menu_item(
-                        "Delete",
-                        IconName::Delete,
-                        theme.danger,
-                        has_selection,
-                        theme,
-                        cx.listener(Self::invoke_context_delete),
-                    )),
-            ),
-        )
-    }
-
-    fn render_tree(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
+    fn render_tree(&mut self, cx: &mut Context<Self>, _theme: AppTheme) -> impl IntoElement {
         self.sync_results_table(cx);
         let table = self
             .results_table
@@ -695,12 +563,11 @@ impl DiskAnalyzerApp {
             .expect("results table must be initialized before rendering")
             .clone();
 
-        let mut tree = div()
+        let tree = div()
             .flex()
             .flex_col()
             .size_full()
             .track_focus(&self.focus_handle)
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::dismiss_context_menu))
             .on_key_down(cx.listener(Self::handle_key_down))
             .child(
                 Table::new(&table)
@@ -708,10 +575,6 @@ impl DiskAnalyzerApp {
                     .bordered(false)
                     .with_size(Size::Small),
             );
-
-        if let Some(menu) = self.render_context_menu(cx, theme) {
-            tree = tree.child(menu);
-        }
 
         tree
     }
@@ -737,7 +600,6 @@ impl Render for DiskAnalyzerApp {
             .text_color(rgb(theme.text_primary))
             .on_action(cx.listener(Self::menu_reveal_action))
             .on_action(cx.listener(Self::menu_rescan_selection_action))
-            .on_action(cx.listener(Self::menu_rescan_root_action))
             .on_action(cx.listener(Self::menu_delete_action))
             .child(self.render_title_bar(cx, theme))
             .child(self.render_header(cx, theme))

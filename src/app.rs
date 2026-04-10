@@ -3,13 +3,13 @@ use std::time::Duration;
 use anyhow::Result;
 use crossbeam_channel::Receiver;
 use gpui::{
-    px, size, App, AppContext, Application, AsyncApp, Bounds, Context, Entity, FocusHandle, Pixels,
+    px, size, App, AppContext, Application, AsyncApp, Bounds, Context, Entity, FocusHandle,
     Subscription, Timer, WeakEntity, WindowBounds, WindowOptions,
 };
 use gpui_component::{Root, TitleBar};
 use gpui_component_assets::Assets;
 
-use crate::model::{AppModel, NodeId};
+use crate::model::AppModel;
 use crate::scanner::{spawn_scan, ScanEvent, ScanHandle, ScanRequest};
 
 mod actions;
@@ -46,15 +46,8 @@ struct DiskAnalyzerApp {
     receiver: Option<Receiver<ScanEvent>>,
     results_table: Option<Entity<views::ResultsTableState>>,
     focus_handle: FocusHandle,
-    context_menu: Option<ContextMenuState>,
     theme_preference: ThemePreference,
     subscriptions: Vec<Subscription>,
-}
-
-#[derive(Clone, Copy)]
-struct ContextMenuState {
-    node_id: NodeId,
-    position: gpui::Point<Pixels>,
 }
 
 impl DiskAnalyzerApp {
@@ -65,7 +58,6 @@ impl DiskAnalyzerApp {
             receiver: None,
             results_table: None,
             focus_handle: cx.focus_handle(),
-            context_menu: None,
             theme_preference: ThemePreference::System,
             subscriptions: Vec::new(),
         };
@@ -126,7 +118,6 @@ impl DiskAnalyzerApp {
             active_scan.cancel();
         }
 
-        self.close_context_menu_state();
         let scan_handle = spawn_scan(request);
         self.receiver = Some(scan_handle.receiver.clone());
         self.active_scan = Some(scan_handle);
