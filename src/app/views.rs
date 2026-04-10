@@ -8,7 +8,7 @@ use gpui_component::{
     progress::Progress,
     spinner::Spinner,
     table::{Column, ColumnSort, Table, TableDelegate, TableEvent, TableState},
-    Disableable, Icon, IconName, Sizable, Size,
+    Disableable, Icon, IconName, Sizable, Size, TitleBar,
 };
 
 use crate::model::{NodeKind, SortMode, VisibleNode};
@@ -509,6 +509,63 @@ impl DiskAnalyzerApp {
             )
     }
 
+    fn render_title_bar(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
+        let root_text = self
+            .model
+            .active_root_path()
+            .map(|path| shorten_path(path, 72))
+            .unwrap_or_else(|| String::from(""));
+
+        TitleBar::new().child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .w_full()
+                .h_full()
+                .gap_3()
+                .pr_2()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .size(px(24.0))
+                                .rounded_md()
+                                .bg(rgb(theme.accent_soft))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    Icon::new(IconName::ChartPie)
+                                        .with_size(Size::XSmall)
+                                        .text_color(rgb(theme.accent)),
+                                ),
+                        )
+                        .child(
+                            div().flex().min_w_0().child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(theme.text_primary))
+                                    .child("Disk Analyzer"),
+                            ),
+                        ),
+                )
+                .child(
+                    Button::new("titlebar-theme-toggle")
+                        .label(format!("Theme: {}", self.theme_preference.label()))
+                        .icon(self.theme_preference.icon())
+                        .with_size(Size::Small)
+                        .compact()
+                        .outline()
+                        .on_click(cx.listener(Self::toggle_theme_click)),
+                ),
+        )
+    }
+
     fn action_button(
         id: &'static str,
         label: impl Into<gpui::SharedString>,
@@ -541,114 +598,26 @@ impl DiskAnalyzerApp {
 
         div()
             .flex()
-            .flex_col()
+            .justify_between()
             .gap_4()
             .p_4()
             .bg(rgb(theme.panel_bg))
-            .border_b_1()
-            .border_color(rgb(theme.border_subtle))
             .child(
                 div()
                     .flex()
-                    .justify_between()
-                    .items_start()
                     .gap_4()
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .child(
-                                        div()
-                                            .size(px(40.0))
-                                            .rounded_lg()
-                                            .bg(rgb(theme.accent_soft))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(
-                                                Icon::new(IconName::ChartPie)
-                                                    .with_size(Size::Medium)
-                                                    .text_color(rgb(theme.accent)),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .text_xl()
-                                                    .text_color(rgb(theme.text_primary))
-                                                    .child("Disk Analyzer"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_color(rgb(theme.text_secondary))
-                                                    .child("Fast, live disk usage inspection with safe actions."),
-                                            ),
-                                    ),
-                            )
-                            .child(div().text_color(rgb(theme.text_muted)).child(root_text)),
-                    )
-                    .child(self.render_status_pill(theme)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(Self::action_button(
-                        "choose-folder",
-                        "Choose Folder",
-                        IconName::FolderOpen,
-                        true,
-                        true,
-                        cx.listener(Self::choose_directory_click),
-                    ))
-                    .child(Self::action_button(
-                        "rescan-root",
-                        "Rescan Root",
-                        IconName::Redo,
-                        self.model.active_root_path().is_some(),
-                        false,
-                        cx.listener(Self::rescan_root_click),
-                    ))
-                    .child(Self::action_button(
-                        "rescan-selection",
-                        "Rescan Selection",
-                        IconName::Replace,
-                        self.model.selected_path().is_some(),
-                        false,
-                        cx.listener(Self::rescan_selected_click),
-                    ))
-                    .child(Self::action_button(
-                        "reveal-selection",
-                        "Reveal",
-                        IconName::ExternalLink,
-                        self.model.selected_path().is_some(),
-                        false,
-                        cx.listener(Self::reveal_selected_click),
-                    ))
-                    .child(
-                        Button::new("theme-toggle")
-                            .label(format!("Theme: {}", self.theme_preference.label()))
-                            .icon(self.theme_preference.icon())
-                            .with_size(Size::Small)
+                        Button::new("choose-folder")
+                            .label("Choose Folder")
+                            .icon(IconName::FolderOpen)
+                            .with_size(Size::Medium)
                             .compact()
                             .outline()
-                            .on_click(cx.listener(Self::toggle_theme_click)),
+                            .on_click(cx.listener(Self::choose_directory_click)),
                     )
-                    .child(
-                        div(),
-                    ),
+                    .child(div().text_color(rgb(theme.text_muted)).child(root_text)),
             )
+            .child(self.render_status_pill(theme))
     }
 
     fn root_total_size(&self) -> u64 {
@@ -828,6 +797,7 @@ impl Render for DiskAnalyzerApp {
             .on_action(cx.listener(Self::menu_rescan_selection_action))
             .on_action(cx.listener(Self::menu_rescan_root_action))
             .on_action(cx.listener(Self::menu_delete_action))
+            .child(self.render_title_bar(cx, theme))
             .child(self.render_header(cx, theme))
             .child(
                 div().flex().flex_1().min_h_0().child(

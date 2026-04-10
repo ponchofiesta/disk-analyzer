@@ -6,7 +6,7 @@ use gpui::{
     px, size, App, AppContext, Application, AsyncApp, Bounds, Context, Entity, FocusHandle, Pixels,
     Subscription, Timer, WeakEntity, WindowBounds, WindowOptions,
 };
-use gpui_component::Root;
+use gpui_component::{Root, TitleBar};
 use gpui_component_assets::Assets;
 
 use crate::model::{AppModel, NodeId};
@@ -26,10 +26,7 @@ pub fn run() -> Result<()> {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("Disk Analyzer".into()),
-                    ..Default::default()
-                }),
+                titlebar: Some(TitleBar::title_bar_options()),
                 ..Default::default()
             },
             |window, cx| {
