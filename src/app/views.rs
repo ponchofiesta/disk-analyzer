@@ -4,7 +4,7 @@ use gpui::{
 };
 use gpui_component::{
     button::{Button, ButtonVariants},
-    progress::Progress,
+    spinner::Spinner,
     Disableable, Icon, IconName, Sizable, Size,
 };
 
@@ -153,6 +153,11 @@ impl DiskAnalyzerApp {
 
     fn render_header(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
         let progress = self.model.progress();
+        let is_scanning = self
+            .model
+            .scan_state
+            .as_ref()
+            .is_some_and(|state| !state.progress.finished);
         let root_text = self
             .model
             .active_root_path()
@@ -332,13 +337,51 @@ impl DiskAnalyzerApp {
                             .flex()
                             .justify_between()
                             .items_center()
+                            .gap_3()
                             .child(
                                 div()
-                                    .text_color(rgb(theme.text_secondary))
-                                    .child(format!("Progress {:.0}%", progress.fraction() * 100.0)),
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        if is_scanning {
+                                            div().child(
+                                                Spinner::new()
+                                                    .icon(IconName::LoaderCircle)
+                                                    .with_size(Size::Small)
+                                                    .color(rgb(theme.accent).into()),
+                                            )
+                                        } else {
+                                            div().child(
+                                                Icon::new(if progress.finished {
+                                                    IconName::Check
+                                                } else {
+                                                    IconName::Info
+                                                })
+                                                .with_size(Size::Small)
+                                                .text_color(rgb(if progress.finished {
+                                                    theme.success
+                                                } else {
+                                                    theme.text_muted
+                                                })),
+                                            )
+                                        },
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(rgb(theme.text_secondary))
+                                            .child(if is_scanning {
+                                                "Scanning"
+                                            } else if progress.finished {
+                                                "Scan complete"
+                                            } else {
+                                                "Idle"
+                                            }),
+                                    ),
                             )
                             .child(
                                 div()
+                                    .text_color(rgb(theme.text_secondary))
                                     .text_color(rgb(theme.text_muted))
                                     .child(
                                         progress
@@ -348,11 +391,6 @@ impl DiskAnalyzerApp {
                                             .unwrap_or_else(|| String::from("Idle")),
                                     ),
                             ),
-                    )
-                    .child(
-                        Progress::new()
-                            .value(progress.fraction() * 100.0)
-                            .h(px(10.0)),
                     )
                     .child(
                         div()
