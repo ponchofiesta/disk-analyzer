@@ -8,7 +8,7 @@ use gpui_component::{
     progress::Progress,
     spinner::Spinner,
     table::{Column, ColumnSort, Table, TableDelegate, TableEvent, TableState},
-    Disableable, Icon, IconName, Sizable, Size, TitleBar,
+    Icon, IconName, Sizable, Size, TitleBar,
 };
 
 use crate::model::{NodeKind, SortMode, VisibleNode};
@@ -465,57 +465,7 @@ impl DiskAnalyzerApp {
             )
     }
 
-    fn render_metric_card(
-        &self,
-        icon: IconName,
-        label: &str,
-        value: String,
-        tone: u32,
-        theme: AppTheme,
-    ) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .min_w(px(170.0))
-            .rounded_lg()
-            .bg(rgb(theme.elevated_bg))
-            .border_1()
-            .border_color(rgb(theme.border_subtle))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .p_2()
-                            .rounded_md()
-                            .bg(rgb(theme.accent_soft))
-                            .child(Icon::new(icon).with_size(Size::Small).text_color(rgb(tone))),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(theme.text_muted))
-                            .child(label.to_string()),
-                    ),
-            )
-            .child(
-                div()
-                    .text_lg()
-                    .text_color(rgb(theme.text_primary))
-                    .child(value),
-            )
-    }
-
     fn render_title_bar(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
-        let root_text = self
-            .model
-            .active_root_path()
-            .map(|path| shorten_path(path, 72))
-            .unwrap_or_else(|| String::from(""));
-
         TitleBar::new().child(
             div()
                 .flex()
@@ -564,29 +514,6 @@ impl DiskAnalyzerApp {
                         .on_click(cx.listener(Self::toggle_theme_click)),
                 ),
         )
-    }
-
-    fn action_button(
-        id: &'static str,
-        label: impl Into<gpui::SharedString>,
-        icon: IconName,
-        enabled: bool,
-        primary: bool,
-        on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Button {
-        let button = Button::new(id)
-            .label(label)
-            .icon(icon)
-            .with_size(Size::Small)
-            .compact()
-            .disabled(!enabled)
-            .on_click(on_click);
-
-        if primary {
-            button.primary()
-        } else {
-            button.outline()
-        }
     }
 
     fn render_header(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
