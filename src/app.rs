@@ -26,6 +26,10 @@ pub fn run() -> Result<()> {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some("Disk Analyzer".into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             |window, cx| {
