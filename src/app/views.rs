@@ -400,11 +400,17 @@ impl DiskAnalyzerApp {
         self.confirm_delete_action(window, cx);
     }
 
-    fn scan_state_label(&self) -> &'static str {
+    fn scan_state_label(&self) -> String {
+        let duration = self
+            .model
+            .last_scan_duration()
+            .map(format_duration)
+            .unwrap_or_else(|| String::from("N/A"));
         match self.model.scan_state.as_ref() {
-            Some(state) if !state.progress.finished => "Scanning",
-            Some(_) => "Ready",
-            None => "Idle",
+            Some(state) if !state.progress.finished => format!("Scanning ({duration})"),
+            Some(state) if state.progress.finished => format!("Scan complete ({duration})"),
+            Some(_) => String::from("Ready"),
+            None => String::from("Idle"),
         }
     }
 
@@ -430,10 +436,25 @@ impl DiskAnalyzerApp {
                     .items_center()
                     .gap_2()
                     .child(
-                        div()
-                            .size(px(8.0))
-                            .rounded_full()
-                            .bg(rgb(self.scan_state_color(theme))),
+                        if self
+                            .model
+                            .scan_state
+                            .as_ref()
+                            .map_or(false, |state| !state.progress.finished)
+                        {
+                            div().child(
+                                Spinner::new()
+                                    .icon(IconName::LoaderCircle)
+                                    .with_size(Size::Small)
+                                    .color(rgb(theme.accent).into()),
+                            )
+                        } else {
+                            div().child(
+                                Icon::new(IconName::CircleCheck)
+                                    .with_size(Size::Small)
+                                    .text_color(rgb(self.scan_state_color(theme))),
+                            )
+                        },
                     )
                     .child(
                         div()
@@ -512,22 +533,11 @@ impl DiskAnalyzerApp {
     }
 
     fn render_header(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
-        let progress = self.model.progress();
-        let is_scanning = self
-            .model
-            .scan_state
-            .as_ref()
-            .is_some_and(|state| !state.progress.finished);
         let root_text = self
             .model
             .active_root_path()
             .map(|path| shorten_path(path, 96))
             .unwrap_or_else(|| String::from("Choose a root folder to analyze disk usage."));
-        let duration = self
-            .model
-            .last_scan_duration()
-            .map(format_duration)
-            .unwrap_or_else(|| String::from("not started"));
 
         div()
             .flex()
@@ -637,116 +647,6 @@ impl DiskAnalyzerApp {
                     )
                     .child(
                         div(),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .flex_wrap()
-                    .child(self.render_metric_card(
-                        IconName::File,
-                        "Files scanned",
-                        progress.files_scanned.to_string(),
-                        theme.accent,
-                        theme,
-                    ))
-                    .child(self.render_metric_card(
-                        IconName::Folder,
-                        "Folders scanned",
-                        progress.directories_scanned.to_string(),
-                        theme.warning,
-                        theme,
-                    ))
-                    .child(self.render_metric_card(
-                        IconName::ChartPie,
-                        "Bytes observed",
-                        format_bytes(progress.bytes_scanned),
-                        theme.success,
-                        theme,
-                    ))
-                    .child(self.render_metric_card(
-                        IconName::Calendar,
-                        "Last run",
-                        duration,
-                        theme.text_secondary,
-                        theme,
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_3()
-                    .rounded_lg()
-                    .bg(rgb(theme.elevated_alt_bg))
-                    .border_1()
-                    .border_color(rgb(theme.border_subtle))
-                    .child(
-                        div()
-                            .flex()
-                            .justify_between()
-                            .items_center()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        if is_scanning {
-                                            div().child(
-                                                Spinner::new()
-                                                    .icon(IconName::LoaderCircle)
-                                                    .with_size(Size::Small)
-                                                    .color(rgb(theme.accent).into()),
-                                            )
-                                        } else {
-                                            div().child(
-                                                Icon::new(if progress.finished {
-                                                    IconName::Check
-                                                } else {
-                                                    IconName::Info
-                                                })
-                                                .with_size(Size::Small)
-                                                .text_color(rgb(if progress.finished {
-                                                    theme.success
-                                                } else {
-                                                    theme.text_muted
-                                                })),
-                                            )
-                                        },
-                                    )
-                                    .child(
-                                        div()
-                                            .text_color(rgb(theme.text_secondary))
-                                            .child(if is_scanning {
-                                                "Scanning"
-                                            } else if progress.finished {
-                                                "Scan complete"
-                                            } else {
-                                                "Idle"
-                                            }),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_color(rgb(theme.text_secondary))
-                                    .text_color(rgb(theme.text_muted))
-                                    .child(
-                                        progress
-                                            .current_path
-                                            .as_deref()
-                                            .map(|path| shorten_path(path, 88))
-                                            .unwrap_or_else(|| String::from("Idle")),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgb(theme.text_muted))
-                            .child(self.model.status_message.clone()),
                     ),
             )
     }
@@ -891,23 +791,6 @@ impl DiskAnalyzerApp {
             .track_focus(&self.focus_handle)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::dismiss_context_menu))
             .on_key_down(cx.listener(Self::handle_key_down))
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .px_3()
-                    .py_2()
-                    .bg(rgb(theme.elevated_alt_bg))
-                    .border_b_1()
-                    .border_color(rgb(theme.border_subtle))
-                    .child(div().text_color(rgb(theme.text_secondary)).child("Tree"))
-                    .child(
-                        div()
-                            .text_color(rgb(theme.text_muted))
-                            .child("Right click for actions"),
-                    ),
-            )
             .child(
                 Table::new(&table)
                     .stripe(true)
