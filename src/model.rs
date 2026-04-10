@@ -10,21 +10,45 @@ pub type NodeId = usize;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SortMode {
     SizeDesc,
+    SizeAsc,
     NameAsc,
+    NameDesc,
+    FilesDesc,
+    FilesAsc,
+    ModifiedDesc,
+    ModifiedAsc,
 }
 
 impl SortMode {
-    pub fn toggle(self) -> Self {
-        match self {
-            Self::SizeDesc => Self::NameAsc,
-            Self::NameAsc => Self::SizeDesc,
+    pub fn for_name(descending: bool) -> Self {
+        if descending {
+            Self::NameDesc
+        } else {
+            Self::NameAsc
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::SizeDesc => "Sort: Size",
-            Self::NameAsc => "Sort: Name",
+    pub fn for_size(descending: bool) -> Self {
+        if descending {
+            Self::SizeDesc
+        } else {
+            Self::SizeAsc
+        }
+    }
+
+    pub fn for_files(descending: bool) -> Self {
+        if descending {
+            Self::FilesDesc
+        } else {
+            Self::FilesAsc
+        }
+    }
+
+    pub fn for_modified(descending: bool) -> Self {
+        if descending {
+            Self::ModifiedDesc
+        } else {
+            Self::ModifiedAsc
         }
     }
 }
@@ -77,7 +101,6 @@ pub struct VisibleNode {
     pub recursive_size: u64,
     pub file_count: u64,
     pub modified_at: Option<SystemTime>,
-    pub selected: bool,
     pub expanded: bool,
     pub has_children: bool,
     pub has_error: bool,
@@ -89,22 +112,7 @@ pub struct ProgressSnapshot {
     pub files_scanned: u64,
     pub directories_scanned: u64,
     pub bytes_scanned: u64,
-    pub directories_discovered: u64,
     pub finished: bool,
-}
-
-impl ProgressSnapshot {
-    pub fn fraction(&self) -> f32 {
-        if self.finished {
-            return 1.0;
-        }
-
-        let denominator = self
-            .directories_discovered
-            .max(self.directories_scanned)
-            .max(1);
-        (self.directories_scanned as f32 / denominator as f32).clamp(0.02, 0.98)
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -190,8 +198,8 @@ impl AppModel {
         }
     }
 
-    pub fn toggle_sort_mode(&mut self) {
-        self.sort_mode = self.sort_mode.toggle();
+    pub fn set_sort_mode(&mut self, sort_mode: SortMode) {
+        self.sort_mode = sort_mode;
     }
 
     pub fn toggle_expanded(&mut self, id: NodeId) {
@@ -561,7 +569,6 @@ impl AppModel {
             recursive_size: node.recursive_size,
             file_count: node.file_count,
             modified_at: node.modified_at,
-            selected: self.selected == Some(node.id),
             expanded: self.expanded.contains(&node.id),
             has_children: node
                 .children
@@ -588,11 +595,40 @@ impl AppModel {
                     .recursive_size
                     .cmp(&left.recursive_size)
                     .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase())),
+                SortMode::SizeAsc => left
+                    .recursive_size
+                    .cmp(&right.recursive_size)
+                    .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase())),
                 SortMode::NameAsc => left
                     .name
                     .to_lowercase()
                     .cmp(&right.name.to_lowercase())
                     .then_with(|| right.recursive_size.cmp(&left.recursive_size)),
+                SortMode::NameDesc => right
+                    .name
+                    .to_lowercase()
+                    .cmp(&left.name.to_lowercase())
+                    .then_with(|| right.recursive_size.cmp(&left.recursive_size)),
+                SortMode::FilesDesc => right
+                    .file_count
+                    .cmp(&left.file_count)
+                    .then_with(|| right.recursive_size.cmp(&left.recursive_size))
+                    .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase())),
+                SortMode::FilesAsc => left
+                    .file_count
+                    .cmp(&right.file_count)
+                    .then_with(|| right.recursive_size.cmp(&left.recursive_size))
+                    .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase())),
+                SortMode::ModifiedDesc => right
+                    .modified_at
+                    .cmp(&left.modified_at)
+                    .then_with(|| right.recursive_size.cmp(&left.recursive_size))
+                    .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase())),
+                SortMode::ModifiedAsc => left
+                    .modified_at
+                    .cmp(&right.modified_at)
+                    .then_with(|| right.recursive_size.cmp(&left.recursive_size))
+                    .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase())),
             }
         });
 

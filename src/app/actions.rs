@@ -119,15 +119,6 @@ impl DiskAnalyzerApp {
         cx.notify();
     }
 
-    pub(super) fn delete_selected_click(
-        &mut self,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.confirm_delete_action(window, cx);
-    }
-
     pub(super) fn confirm_delete_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selected_path) = self.model.selected_path().map(PathBuf::from) else {
             self.model.status_message = String::from("Select a file or directory first.");
@@ -180,28 +171,6 @@ impl DiskAnalyzerApp {
         cx: &mut Context<Self>,
     ) {
         self.theme_preference = self.theme_preference.cycle();
-        cx.notify();
-    }
-
-    pub(super) fn toggle_sort_click(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.model.toggle_sort_mode();
-        cx.notify();
-    }
-
-    pub(super) fn select_row(
-        &mut self,
-        node_id: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.model.select(node_id);
-        self.close_context_menu_state();
-        window.focus(&self.focus_handle);
         cx.notify();
     }
 

@@ -3,8 +3,8 @@ use std::time::Duration;
 use anyhow::Result;
 use crossbeam_channel::Receiver;
 use gpui::{
-    px, size, App, AppContext, Application, AsyncApp, Bounds, Context, FocusHandle, Pixels, Timer,
-    WeakEntity, WindowBounds, WindowOptions,
+    px, size, App, AppContext, Application, AsyncApp, Bounds, Context, Entity, FocusHandle, Pixels,
+    Subscription, Timer, WeakEntity, WindowBounds, WindowOptions,
 };
 use gpui_component::Root;
 use gpui_component_assets::Assets;
@@ -47,9 +47,11 @@ struct DiskAnalyzerApp {
     model: AppModel,
     active_scan: Option<ScanHandle>,
     receiver: Option<Receiver<ScanEvent>>,
+    results_table: Option<Entity<views::ResultsTableState>>,
     focus_handle: FocusHandle,
     context_menu: Option<ContextMenuState>,
     theme_preference: ThemePreference,
+    subscriptions: Vec<Subscription>,
 }
 
 #[derive(Clone, Copy)]
@@ -64,9 +66,11 @@ impl DiskAnalyzerApp {
             model: AppModel::default(),
             active_scan: None,
             receiver: None,
+            results_table: None,
             focus_handle: cx.focus_handle(),
             context_menu: None,
             theme_preference: ThemePreference::System,
+            subscriptions: Vec::new(),
         };
         app.spawn_event_poller(cx);
         app

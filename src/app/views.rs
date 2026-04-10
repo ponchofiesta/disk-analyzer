@@ -1,20 +1,405 @@
 use gpui::{
-    anchored, div, prelude::*, px, rgb, App, Context, FocusHandle, Focusable, MouseButton,
-    MouseDownEvent, Render, Window, WindowBackgroundAppearance,
+    actions, anchored, div, prelude::*, px, rgb, App, Context, FocusHandle, Focusable, MouseButton,
+    MouseDownEvent, Render, WeakEntity, Window, WindowBackgroundAppearance,
 };
 use gpui_component::{
     button::{Button, ButtonVariants},
+    menu::PopupMenu,
     progress::Progress,
     spinner::Spinner,
+    table::{Column, ColumnSort, Table, TableDelegate, TableEvent, TableState},
     Disableable, Icon, IconName, Sizable, Size,
 };
 
-use crate::model::NodeKind;
+use crate::model::{NodeKind, SortMode, VisibleNode};
 use crate::ui::{format_bytes, format_duration, format_modified_time, shorten_path, shorten_text};
 
 use super::{theme::AppTheme, DiskAnalyzerApp};
 
+actions!(
+    results_table_menu,
+    [
+        RevealSelection,
+        RescanSelection,
+        RescanRoot,
+        DeleteSelection
+    ]
+);
+
+pub(super) type ResultsTableState = TableState<ResultsTableDelegate>;
+
+#[derive(Clone)]
+pub(super) struct ResultsTableDelegate {
+    app: WeakEntity<DiskAnalyzerApp>,
+    focus_handle: FocusHandle,
+    theme_preference: super::theme::ThemePreference,
+    rows: Vec<VisibleNode>,
+    root_total_size: u64,
+    columns: Vec<Column>,
+}
+
+impl ResultsTableDelegate {
+    fn new(app: WeakEntity<DiskAnalyzerApp>, focus_handle: FocusHandle) -> Self {
+        Self {
+            app,
+            focus_handle,
+            theme_preference: super::theme::ThemePreference::System,
+            rows: Vec::new(),
+            root_total_size: 0,
+            columns: Self::build_columns(SortMode::SizeDesc),
+        }
+    }
+
+    fn build_columns(sort_mode: SortMode) -> Vec<Column> {
+        vec![
+            Column::new("tree", "Name")
+                .width(px(520.0))
+                .fixed_left()
+                .sort(Self::column_sort(sort_mode, 0))
+                .movable(false),
+            Column::new("size", "Size")
+                .width(px(120.0))
+                .text_right()
+                .sort(Self::column_sort(sort_mode, 1))
+                .movable(false),
+            Column::new("files", "Files")
+                .width(px(90.0))
+                .text_right()
+                .sort(Self::column_sort(sort_mode, 2))
+                .movable(false),
+            Column::new("share", "Share")
+                .width(px(190.0))
+                .movable(false)
+                .resizable(false)
+                .selectable(false),
+            Column::new("modified", "Modified")
+                .width(px(150.0))
+                .text_right()
+                .sort(Self::column_sort(sort_mode, 4))
+                .movable(false),
+        ]
+    }
+
+    fn column_sort(sort_mode: SortMode, column_ix: usize) -> ColumnSort {
+        match (column_ix, sort_mode) {
+            (0, SortMode::NameAsc) => ColumnSort::Ascending,
+            (0, SortMode::NameDesc) => ColumnSort::Descending,
+            (1, SortMode::SizeAsc) => ColumnSort::Ascending,
+            (1, SortMode::SizeDesc) => ColumnSort::Descending,
+            (2, SortMode::FilesAsc) => ColumnSort::Ascending,
+            (2, SortMode::FilesDesc) => ColumnSort::Descending,
+            (4, SortMode::ModifiedAsc) => ColumnSort::Ascending,
+            (4, SortMode::ModifiedDesc) => ColumnSort::Descending,
+            _ => ColumnSort::Default,
+        }
+    }
+
+    fn sync_from_app(&mut self, app: &DiskAnalyzerApp) {
+        self.theme_preference = app.theme_preference;
+        self.rows = app.model.visible_nodes();
+        self.root_total_size = app.root_total_size();
+        self.columns = Self::build_columns(app.model.sort_mode);
+    }
+
+    fn share_percent(&self, size: u64) -> f32 {
+        if self.root_total_size == 0 {
+            0.0
+        } else {
+            ((size as f64 / self.root_total_size as f64) * 100.0).clamp(0.0, 100.0) as f32
+        }
+    }
+}
+
+impl TableDelegate for ResultsTableDelegate {
+    fn columns_count(&self, _: &App) -> usize {
+        self.columns.len()
+    }
+
+    fn rows_count(&self, _: &App) -> usize {
+        self.rows.len()
+    }
+
+    fn column(&self, col_ix: usize, _: &App) -> &Column {
+        &self.columns[col_ix]
+    }
+
+    fn perform_sort(
+        &mut self,
+        col_ix: usize,
+        sort: ColumnSort,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+
+        let next_sort = match col_ix {
+            0 => SortMode::for_name(matches!(sort, ColumnSort::Descending)),
+            1 => SortMode::for_size(matches!(sort, ColumnSort::Descending)),
+            2 => SortMode::for_files(matches!(sort, ColumnSort::Descending)),
+            4 => SortMode::for_modified(matches!(sort, ColumnSort::Descending)),
+            _ => return,
+        };
+
+        let _ = app.update(cx, |app, cx| {
+            app.model.set_sort_mode(next_sort);
+            cx.notify();
+        });
+
+        let app = app.read(cx);
+        self.sync_from_app(app);
+    }
+
+    fn render_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let row = &self.rows[row_ix];
+        let theme = AppTheme::from_window(window, self.theme_preference);
+        let share_percent = self.share_percent(row.recursive_size);
+
+        match col_ix {
+            0 => {
+                let node_id = row.id;
+                let indent = px((row.depth * 18) as f32);
+                let icon = match row.kind {
+                    NodeKind::Directory => {
+                        if row.expanded {
+                            IconName::FolderOpen
+                        } else {
+                            IconName::FolderClosed
+                        }
+                    }
+                    NodeKind::File => IconName::File,
+                    NodeKind::Symlink => IconName::ExternalLink,
+                    NodeKind::Other => IconName::Frame,
+                };
+                let name_color = if row.has_error {
+                    theme.danger
+                } else {
+                    theme.text_primary
+                };
+
+                let toggle = if row.kind.is_directory() && row.has_children {
+                    let app = self.app.clone();
+                    div()
+                        .size(px(22.0))
+                        .rounded_sm()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .hover(|style| style.bg(rgb(theme.elevated_alt_bg)))
+                        .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                            cx.stop_propagation();
+                            let _ = app.update(cx, |app, cx| app.toggle_row(node_id, window, cx));
+                        })
+                        .child(
+                            Icon::new(if row.expanded {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            })
+                            .with_size(Size::XSmall)
+                            .text_color(rgb(theme.text_muted)),
+                        )
+                        .into_any_element()
+                } else {
+                    div().size(px(22.0)).into_any_element()
+                };
+
+                div()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .pl(indent)
+                    .child(toggle)
+                    .child(
+                        Icon::new(icon)
+                            .with_size(Size::Small)
+                            .text_color(rgb(theme.accent)),
+                    )
+                    .child(
+                        div().flex().flex_col().gap_0p5().child(
+                            div()
+                                .text_color(rgb(name_color))
+                                .child(shorten_text(&row.name, 42)),
+                        ),
+                    )
+                    .into_any_element()
+            }
+            1 => div()
+                .size_full()
+                .text_right()
+                .text_color(rgb(theme.text_secondary))
+                .child(format_bytes(row.recursive_size))
+                .into_any_element(),
+            2 => div()
+                .size_full()
+                .text_right()
+                .text_color(rgb(theme.text_secondary))
+                .child(row.file_count.to_string())
+                .into_any_element(),
+            3 => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(Progress::new().value(share_percent).h(px(8.0)).flex_1())
+                .child(
+                    div()
+                        .min_w(px(48.0))
+                        .text_right()
+                        .text_color(rgb(theme.text_muted))
+                        .child(format!("{share_percent:.1}%")),
+                )
+                .into_any_element(),
+            4 => div()
+                .size_full()
+                .text_right()
+                .text_color(rgb(if row.has_error {
+                    theme.danger
+                } else {
+                    theme.text_muted
+                }))
+                .child(format_modified_time(row.modified_at))
+                .into_any_element(),
+            _ => div().into_any_element(),
+        }
+    }
+
+    fn context_menu(
+        &mut self,
+        row_ix: usize,
+        menu: PopupMenu,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        if let Some(row) = self.rows.get(row_ix) {
+            let node_id = row.id;
+            let _ = self.app.update(cx, |app, cx| {
+                app.model.set_context_target(Some(node_id));
+                app.model.select(node_id);
+                cx.notify();
+            });
+        }
+
+        menu.action_context(self.focus_handle.clone())
+            .menu_with_enable("Reveal in File Manager", Box::new(RevealSelection), true)
+            .menu_with_enable("Rescan Selected Subtree", Box::new(RescanSelection), true)
+            .menu_with_enable(
+                "Rescan Root",
+                Box::new(RescanRoot),
+                self.root_total_size > 0,
+            )
+            .menu_with_enable("Delete", Box::new(DeleteSelection), true)
+    }
+}
+
 impl DiskAnalyzerApp {
+    fn ensure_results_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.results_table.is_some() {
+            return;
+        }
+
+        let mut delegate =
+            ResultsTableDelegate::new(cx.entity().downgrade(), self.focus_handle.clone());
+        delegate.sync_from_app(self);
+
+        let table = cx.new(|cx| {
+            TableState::new(delegate, window, cx)
+                .loop_selection(false)
+                .col_movable(false)
+                .col_resizable(true)
+                .col_selectable(false)
+                .row_selectable(true)
+                .sortable(true)
+        });
+
+        self.subscriptions
+            .push(cx.subscribe(&table, |this, table, event, cx| match event {
+                TableEvent::SelectRow(row_ix) => {
+                    let node_id = table
+                        .read(cx)
+                        .delegate()
+                        .rows
+                        .get(*row_ix)
+                        .map(|row| row.id);
+                    if let Some(node_id) = node_id {
+                        this.model.select(node_id);
+                        this.close_context_menu_state();
+                        cx.notify();
+                    }
+                }
+                TableEvent::DoubleClickedRow(row_ix) => {
+                    let node = table.read(cx).delegate().rows.get(*row_ix).cloned();
+                    if let Some(node) = node {
+                        this.model.select(node.id);
+                        if node.kind.is_directory() {
+                            this.model.toggle_expanded(node.id);
+                        } else {
+                            this.reveal_selected_action(cx);
+                        }
+                        cx.notify();
+                    }
+                }
+                _ => {}
+            }));
+
+        self.results_table = Some(table);
+    }
+
+    fn sync_results_table(&mut self, cx: &mut Context<Self>) {
+        let Some(table) = &self.results_table else {
+            return;
+        };
+
+        table.update(cx, |table, cx| {
+            table.delegate_mut().sync_from_app(self);
+            table.refresh(cx);
+            if let Some(selected) = self.model.selected {
+                if let Some(row_ix) = table
+                    .delegate()
+                    .rows
+                    .iter()
+                    .position(|row| row.id == selected)
+                {
+                    table.set_selected_row(row_ix, cx);
+                }
+            }
+        });
+    }
+
+    fn menu_reveal_action(&mut self, _: &RevealSelection, _: &mut Window, cx: &mut Context<Self>) {
+        self.reveal_selected_action(cx);
+    }
+
+    fn menu_rescan_selection_action(
+        &mut self,
+        _: &RescanSelection,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rescan_selected_action(cx);
+    }
+
+    fn menu_rescan_root_action(&mut self, _: &RescanRoot, _: &mut Window, cx: &mut Context<Self>) {
+        self.rescan_root_action(cx);
+    }
+
+    fn menu_delete_action(
+        &mut self,
+        _: &DeleteSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.confirm_delete_action(window, cx);
+    }
+
     fn scan_state_label(&self) -> &'static str {
         match self.model.scan_state.as_ref() {
             Some(state) if !state.progress.finished => "Scanning",
@@ -251,16 +636,7 @@ impl DiskAnalyzerApp {
                             .on_click(cx.listener(Self::toggle_theme_click)),
                     )
                     .child(
-                        Button::new("sort-toggle")
-                            .label(self.model.sort_mode.label())
-                            .icon(match self.model.sort_mode {
-                                crate::model::SortMode::SizeDesc => IconName::ChartPie,
-                                crate::model::SortMode::NameAsc => IconName::ALargeSmall,
-                            })
-                            .with_size(Size::Small)
-                            .compact()
-                            .outline()
-                            .on_click(cx.listener(Self::toggle_sort_click)),
+                        div(),
                     ),
             )
             .child(
@@ -383,51 +759,6 @@ impl DiskAnalyzerApp {
             .unwrap_or(0)
     }
 
-    fn render_table_header(&self, theme: AppTheme) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .px_3()
-            .py_2()
-            .bg(rgb(theme.elevated_alt_bg))
-            .border_b_1()
-            .border_color(rgb(theme.border_subtle))
-            .child(
-                div()
-                    .flex_1()
-                    .text_color(rgb(theme.text_secondary))
-                    .child("Tree"),
-            )
-            .child(
-                div()
-                    .w(px(120.0))
-                    .text_right()
-                    .text_color(rgb(theme.text_secondary))
-                    .child("Size"),
-            )
-            .child(
-                div()
-                    .w(px(90.0))
-                    .text_right()
-                    .text_color(rgb(theme.text_secondary))
-                    .child("Files"),
-            )
-            .child(
-                div()
-                    .w(px(190.0))
-                    .text_color(rgb(theme.text_secondary))
-                    .child("Share"),
-            )
-            .child(
-                div()
-                    .w(px(150.0))
-                    .text_right()
-                    .text_color(rgb(theme.text_secondary))
-                    .child("Modified"),
-            )
-    }
-
     fn render_menu_item(
         &self,
         label: &'static str,
@@ -546,15 +877,18 @@ impl DiskAnalyzerApp {
     }
 
     fn render_tree(&mut self, cx: &mut Context<Self>, theme: AppTheme) -> impl IntoElement {
-        let row_count = self.model.visible_nodes().len();
-        let focus_handle = self.focus_handle.clone();
-        let root_total_size = self.root_total_size();
+        self.sync_results_table(cx);
+        let table = self
+            .results_table
+            .as_ref()
+            .expect("results table must be initialized before rendering")
+            .clone();
 
         let mut tree = div()
             .flex()
             .flex_col()
             .size_full()
-            .track_focus(&focus_handle)
+            .track_focus(&self.focus_handle)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::dismiss_context_menu))
             .on_key_down(cx.listener(Self::handle_key_down))
             .child(
@@ -574,189 +908,11 @@ impl DiskAnalyzerApp {
                             .child("Right click for actions"),
                     ),
             )
-            .child(self.render_table_header(theme))
             .child(
-                gpui::uniform_list(
-                    "disk-tree",
-                    row_count,
-                    cx.processor(move |this, range, _window, cx| {
-                        let rows = this.model.visible_nodes();
-                        let view = cx.entity().downgrade();
-                        let mut elements = Vec::new();
-
-                        for index in range {
-                            if let Some(row) = rows.get(index as usize).cloned() {
-                                let node_id = row.id;
-                                let select_view = view.clone();
-                                let context_view = view.clone();
-                                let toggle_view = view.clone();
-                                let indent = px((row.depth * 18) as f32);
-                                let icon = match row.kind {
-                                    NodeKind::Directory => {
-                                        if row.expanded {
-                                            IconName::FolderOpen
-                                        } else {
-                                            IconName::FolderClosed
-                                        }
-                                    }
-                                    NodeKind::File => IconName::File,
-                                    NodeKind::Symlink => IconName::ExternalLink,
-                                    NodeKind::Other => IconName::Frame,
-                                };
-                                let row_bg = if row.selected {
-                                    theme.selection_bg
-                                } else {
-                                    theme.row_bg
-                                };
-                                let name_color = if row.has_error {
-                                    theme.danger
-                                } else {
-                                    theme.text_primary
-                                };
-                                let share_percent = if root_total_size == 0 {
-                                    0.0
-                                } else {
-                                    ((row.recursive_size as f64 / root_total_size as f64) * 100.0)
-                                        .clamp(0.0, 100.0)
-                                        as f32
-                                };
-
-                                let row_div = div()
-                                    .id(index)
-                                    .h(px(48.0))
-                                    .w_full()
-                                    .flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .px_3()
-                                    .bg(rgb(row_bg))
-                                    .border_b_1()
-                                    .border_color(rgb(theme.border_subtle))
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(rgb(theme.row_hover)))
-                                    .on_click(move |_, window, cx| {
-                                        let _ = select_view.update(cx, |this, cx| {
-                                            this.select_row(node_id, window, cx)
-                                        });
-                                    })
-                                    .on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                                        let _ = context_view.update(cx, |this, cx| {
-                                            this.open_context_for_row(
-                                                node_id,
-                                                event.position,
-                                                window,
-                                                cx,
-                                            )
-                                        });
-                                    });
-
-                                let toggle = if row.kind.is_directory() && row.has_children {
-                                    let toggle_view = toggle_view.clone();
-                                    div()
-                                        .size(px(22.0))
-                                        .rounded_sm()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .hover(|style| style.bg(rgb(theme.elevated_alt_bg)))
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            move |_event, window, cx| {
-                                                cx.stop_propagation();
-                                                let _ = toggle_view.update(cx, |this, cx| {
-                                                    this.toggle_row(node_id, window, cx)
-                                                });
-                                            },
-                                        )
-                                        .child(
-                                            Icon::new(if row.expanded {
-                                                IconName::ChevronDown
-                                            } else {
-                                                IconName::ChevronRight
-                                            })
-                                            .with_size(Size::XSmall)
-                                            .text_color(rgb(theme.text_muted)),
-                                        )
-                                } else {
-                                    div().size(px(22.0))
-                                };
-
-                                elements.push(
-                                    row_div
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .pl(indent)
-                                                .child(toggle)
-                                                .child(
-                                                    Icon::new(icon)
-                                                        .with_size(Size::Small)
-                                                        .text_color(rgb(theme.accent)),
-                                                )
-                                                .child(
-                                                    div().flex().flex_col().gap_0p5().child(
-                                                        div()
-                                                            .text_color(rgb(name_color))
-                                                            .child(shorten_text(&row.name, 42)),
-                                                    ),
-                                                ),
-                                        )
-                                        .child(
-                                            div().w(px(120.0)).text_right().child(
-                                                div()
-                                                    .text_color(rgb(theme.text_secondary))
-                                                    .child(format_bytes(row.recursive_size)),
-                                            ),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(px(90.0))
-                                                .text_right()
-                                                .text_color(rgb(theme.text_secondary))
-                                                .child(row.file_count.to_string()),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(px(190.0))
-                                                .flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Progress::new()
-                                                        .value(share_percent)
-                                                        .h(px(8.0))
-                                                        .flex_1(),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .min_w(px(48.0))
-                                                        .text_right()
-                                                        .text_color(rgb(theme.text_muted))
-                                                        .child(format!("{share_percent:.1}%")),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(px(150.0))
-                                                .text_right()
-                                                .text_color(rgb(if row.has_error {
-                                                    theme.danger
-                                                } else {
-                                                    theme.text_muted
-                                                }))
-                                                .child(format_modified_time(row.modified_at)),
-                                        ),
-                                );
-                            }
-                        }
-
-                        elements
-                    }),
-                )
-                .h_full(),
+                Table::new(&table)
+                    .stripe(true)
+                    .bordered(false)
+                    .with_size(Size::Small),
             );
 
         if let Some(menu) = self.render_context_menu(cx, theme) {
@@ -777,6 +933,7 @@ impl Render for DiskAnalyzerApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_background_appearance(WindowBackgroundAppearance::Opaque);
         let theme = AppTheme::from_window(window, self.theme_preference);
+        self.ensure_results_table(window, cx);
 
         div()
             .size_full()
@@ -784,6 +941,10 @@ impl Render for DiskAnalyzerApp {
             .flex_col()
             .bg(rgb(theme.app_bg))
             .text_color(rgb(theme.text_primary))
+            .on_action(cx.listener(Self::menu_reveal_action))
+            .on_action(cx.listener(Self::menu_rescan_selection_action))
+            .on_action(cx.listener(Self::menu_rescan_root_action))
+            .on_action(cx.listener(Self::menu_delete_action))
             .child(self.render_header(cx, theme))
             .child(
                 div().flex().flex_1().min_h_0().child(
