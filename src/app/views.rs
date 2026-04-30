@@ -203,27 +203,51 @@ impl TableDelegate for ResultsTableDelegate {
                     .h_full()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .justify_between()
                     .pl(indent)
-                    .child(toggle)
-                    .child(Icon::new(icon).with_size(Size::Small).text_color(
-                        if row.removed || row.has_error {
-                            _cx.theme().danger
-                        } else {
-                            _cx.theme().primary
-                        },
-                    ))
                     .child(
-                        div().flex().flex_col().gap_0p5().child(
-                            div()
-                                .text_color(if row.removed || row.has_error {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .flex_1()
+                            .child(toggle)
+                            .child(Icon::new(icon).with_size(Size::Small).text_color(
+                                if row.removed || row.has_error {
                                     _cx.theme().danger
                                 } else {
-                                    _cx.theme().foreground
-                                })
-                                .when(row.removed, |this| this.line_through())
-                                .child(shorten_text(&row.name, 42)),
-                        ),
+                                    _cx.theme().primary
+                                },
+                            ))
+                            .child(
+                                div().flex().flex_col().gap_0p5().min_w_0().child(
+                                    div()
+                                        .truncate()
+                                        .text_color(if row.removed || row.has_error {
+                                            _cx.theme().danger
+                                        } else {
+                                            _cx.theme().foreground
+                                        })
+                                        .when(row.removed, |this| this.line_through())
+                                        .child(shorten_text(&row.name, 42)),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .min_w(px(20.0))
+                            .flex()
+                            .justify_end()
+                            .child(if row.is_scanning {
+                                Spinner::new()
+                                    .icon(IconName::LoaderCircle)
+                                    .with_size(Size::XSmall)
+                                    .color(_cx.theme().primary)
+                                    .into_any_element()
+                            } else {
+                                div().into_any_element()
+                            }),
                     )
                     .into_any_element()
             }
@@ -300,9 +324,24 @@ impl TableDelegate for ResultsTableDelegate {
         }
 
         menu.action_context(self.focus_handle.clone())
-            .menu_with_enable("Reveal in File Manager", Box::new(RevealSelection), true)
-            .menu_with_enable("Rescan", Box::new(RescanSelection), true)
-            .menu_with_enable("Delete", Box::new(DeleteSelection), true)
+            .menu_with_icon_and_disabled(
+                "Reveal in File Manager",
+                IconName::ExternalLink,
+                Box::new(RevealSelection),
+                false,
+            )
+            .menu_with_icon_and_disabled(
+                "Rescan",
+                IconName::Redo2,
+                Box::new(RescanSelection),
+                false,
+            )
+            .menu_with_icon_and_disabled(
+                "Delete",
+                IconName::Delete,
+                Box::new(DeleteSelection),
+                false,
+            )
     }
 }
 

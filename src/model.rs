@@ -105,6 +105,7 @@ pub struct VisibleNode {
     pub has_children: bool,
     pub has_error: bool,
     pub removed: bool,
+    pub is_scanning: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -239,6 +240,14 @@ impl AppModel {
             self.push_visible(root, 0, &mut rows);
         }
         rows
+    }
+
+    fn is_node_in_active_scan_chain(&self, node: &TreeNode) -> bool {
+        self.scan_state
+            .as_ref()
+            .filter(|state| !state.progress.finished)
+            .and_then(|state| state.progress.current_path.as_ref())
+            .is_some_and(|current_path| current_path.starts_with(&node.path))
     }
 
     pub fn move_selection(&mut self, delta: isize) {
@@ -571,6 +580,7 @@ impl AppModel {
             has_children: !node.children.is_empty(),
             has_error: node.last_error.is_some(),
             removed: node.removed,
+            is_scanning: self.is_node_in_active_scan_chain(node),
         });
 
         if !self.expanded.contains(&node.id) {
