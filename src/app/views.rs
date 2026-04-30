@@ -352,13 +352,20 @@ impl DiskAnalyzerApp {
             table.delegate_mut().sync_from_app(self);
             table.refresh(cx);
             if let Some(selected) = self.model.selected {
-                if let Some(row_ix) = table
-                    .delegate()
-                    .rows
-                    .iter()
-                    .position(|row| row.id == selected)
-                {
-                    table.set_selected_row(row_ix, cx);
+                let selection_matches = table
+                    .selected_row()
+                    .and_then(|row_ix| table.delegate().rows.get(row_ix))
+                    .is_some_and(|row| row.id == selected);
+
+                if !selection_matches {
+                    if let Some(row_ix) = table
+                        .delegate()
+                        .rows
+                        .iter()
+                        .position(|row| row.id == selected)
+                    {
+                        table.set_selected_row(row_ix, cx);
+                    }
                 }
             }
         });
