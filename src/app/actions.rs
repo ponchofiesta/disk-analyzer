@@ -115,6 +115,7 @@ impl DiskAnalyzerApp {
     }
 
     pub(super) fn confirm_delete_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected_id = self.model.selected;
         let Some(selected_path) = self.model.selected_path().map(PathBuf::from) else {
             self.model.status_message = String::from("Select a file or directory first.");
             cx.notify();
@@ -136,14 +137,11 @@ impl DiskAnalyzerApp {
                     let _ = this.update(&mut cx, |this, cx: &mut Context<Self>| {
                         match trash_path(&selected_path) {
                             Ok(()) => {
+                                if let Some(selected_id) = selected_id {
+                                    this.model.mark_deleted(selected_id);
+                                }
                                 this.model.status_message =
                                     format!("Moved {} to trash", selected_path.display());
-                                this.start_scan(ScanRequest::root(
-                                    selected_path
-                                        .parent()
-                                        .unwrap_or(&selected_path)
-                                        .to_path_buf(),
-                                ));
                             }
                             Err(error) => {
                                 this.model.status_message = format!("Delete failed: {error}");

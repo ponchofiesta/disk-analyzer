@@ -206,23 +206,22 @@ impl TableDelegate for ResultsTableDelegate {
                     .gap_2()
                     .pl(indent)
                     .child(toggle)
-                    .child(
-                        Icon::new(icon)
-                            .with_size(Size::Small)
-                            .text_color(if row.has_error {
-                                _cx.theme().danger
-                            } else {
-                                _cx.theme().primary
-                            }),
-                    )
+                    .child(Icon::new(icon).with_size(Size::Small).text_color(
+                        if row.removed || row.has_error {
+                            _cx.theme().danger
+                        } else {
+                            _cx.theme().primary
+                        },
+                    ))
                     .child(
                         div().flex().flex_col().gap_0p5().child(
                             div()
-                                .text_color(if row.has_error {
+                                .text_color(if row.removed || row.has_error {
                                     _cx.theme().danger
                                 } else {
                                     _cx.theme().foreground
                                 })
+                                .when(row.removed, |this| this.line_through())
                                 .child(shorten_text(&row.name, 42)),
                         ),
                     )
@@ -231,13 +230,23 @@ impl TableDelegate for ResultsTableDelegate {
             1 => div()
                 .size_full()
                 .text_right()
-                .text_color(_cx.theme().foreground)
+                .text_color(if row.removed {
+                    _cx.theme().danger
+                } else {
+                    _cx.theme().foreground
+                })
+                .when(row.removed, |this| this.line_through())
                 .child(format_bytes(row.recursive_size))
                 .into_any_element(),
             2 => div()
                 .size_full()
                 .text_right()
-                .text_color(_cx.theme().foreground)
+                .text_color(if row.removed {
+                    _cx.theme().danger
+                } else {
+                    _cx.theme().foreground
+                })
+                .when(row.removed, |this| this.line_through())
                 .child(row.file_count.to_string())
                 .into_any_element(),
             3 => div()
@@ -250,18 +259,24 @@ impl TableDelegate for ResultsTableDelegate {
                     div()
                         .min_w(px(48.0))
                         .text_right()
-                        .text_color(_cx.theme().muted_foreground)
+                        .text_color(if row.removed {
+                            _cx.theme().danger
+                        } else {
+                            _cx.theme().muted_foreground
+                        })
+                        .when(row.removed, |this| this.line_through())
                         .child(format!("{share_percent:.1}%")),
                 )
                 .into_any_element(),
             4 => div()
                 .size_full()
                 .text_right()
-                .text_color(if row.has_error {
+                .text_color(if row.removed || row.has_error {
                     _cx.theme().danger
                 } else {
                     _cx.theme().muted_foreground
                 })
+                .when(row.removed, |this| this.line_through())
                 .child(format_modified_time(row.modified_at))
                 .into_any_element(),
             _ => div().into_any_element(),

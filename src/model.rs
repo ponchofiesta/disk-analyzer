@@ -104,6 +104,7 @@ pub struct VisibleNode {
     pub expanded: bool,
     pub has_children: bool,
     pub has_error: bool,
+    pub removed: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -158,7 +159,6 @@ impl AppModel {
     pub fn active_root_path(&self) -> Option<&Path> {
         self.root
             .and_then(|root| self.nodes.get(root))
-            .filter(|node| !node.removed)
             .map(|node| node.path.as_path())
     }
 
@@ -227,6 +227,10 @@ impl AppModel {
         if let Some(id) = id {
             self.select(id);
         }
+    }
+
+    pub fn mark_deleted(&mut self, id: NodeId) {
+        self.mark_removed(id);
     }
 
     pub fn visible_nodes(&self) -> Vec<VisibleNode> {
@@ -428,9 +432,6 @@ impl AppModel {
         if self.context_target == Some(node_id) {
             self.context_target = None;
         }
-        if self.selected == Some(node_id) {
-            self.selected = None;
-        }
 
         for child in children {
             self.mark_removed(child);
@@ -557,9 +558,6 @@ impl AppModel {
         let Some(node) = self.nodes.get(node_id) else {
             return;
         };
-        if node.removed {
-            return;
-        }
 
         rows.push(VisibleNode {
             id: node.id,
@@ -570,11 +568,9 @@ impl AppModel {
             file_count: node.file_count,
             modified_at: node.modified_at,
             expanded: self.expanded.contains(&node.id),
-            has_children: node
-                .children
-                .iter()
-                .any(|child| !self.nodes[*child].removed),
+            has_children: !node.children.is_empty(),
             has_error: node.last_error.is_some(),
+            removed: node.removed,
         });
 
         if !self.expanded.contains(&node.id) {
@@ -582,11 +578,6 @@ impl AppModel {
         }
 
         let mut children = node.children.clone();
-        children.retain(|child| {
-            self.nodes
-                .get(*child)
-                .is_some_and(|child_node| !child_node.removed)
-        });
         children.sort_by(|left, right| {
             let left = &self.nodes[*left];
             let right = &self.nodes[*right];
