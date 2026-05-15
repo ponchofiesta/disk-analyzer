@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -18,11 +19,12 @@ mod views;
 
 use self::theme::ThemePreference;
 
-pub fn run() -> Result<()> {
-    Application::new().with_assets(Assets).run(|cx: &mut App| {
+pub fn run(initial_scan_target: Option<PathBuf>) -> Result<()> {
+    Application::new().with_assets(Assets).run(move |cx: &mut App| {
         gpui_component::init(cx);
 
         let bounds = Bounds::centered(None, size(px(1280.0), px(820.0)), cx);
+        let initial_scan_target = initial_scan_target.clone();
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -32,8 +34,9 @@ pub fn run() -> Result<()> {
                 }),
                 ..Default::default()
             },
-            |window, cx| {
-                let view = cx.new(DiskAnalyzerApp::new);
+            move |window, cx| {
+                let initial_scan_target = initial_scan_target.clone();
+                let view = cx.new(move |cx| DiskAnalyzerApp::new(initial_scan_target.clone(), cx));
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )
@@ -54,8 +57,8 @@ struct DiskAnalyzerApp {
 }
 
 impl DiskAnalyzerApp {
-    fn new(cx: &mut Context<Self>) -> Self {
-        let app = Self {
+    fn new(initial_scan_target: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
+        let mut app = Self {
             model: AppModel::default(),
             active_scan: None,
             receiver: None,
@@ -64,6 +67,11 @@ impl DiskAnalyzerApp {
             theme_preference: ThemePreference::System,
             subscriptions: Vec::new(),
         };
+
+        if let Some(target) = initial_scan_target {
+            app.start_scan(ScanRequest::root(target));
+        }
+
         app.spawn_event_poller(cx);
         app
     }

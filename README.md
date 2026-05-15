@@ -37,6 +37,14 @@ Disk Analyzer is a Rust desktop application for inspecting disk usage with a res
 cargo run
 ```
 
+To start scanning a directory immediately on launch, pass it as the optional positional argument:
+
+```powershell
+cargo run -- C:\Users\me\Downloads
+```
+
+The startup path must exist and be a directory.
+
 ### Release build
 
 ```powershell
