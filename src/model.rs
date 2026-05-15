@@ -89,7 +89,6 @@ pub struct TreeNode {
     pub modified_at: Option<SystemTime>,
     pub children: Vec<NodeId>,
     pub last_error: Option<String>,
-    pub removed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -104,16 +103,12 @@ pub struct VisibleNode {
     pub expanded: bool,
     pub has_children: bool,
     pub has_error: bool,
-    pub removed: bool,
     pub is_scanning: bool,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ProgressSnapshot {
     pub current_path: Option<PathBuf>,
-    pub files_scanned: u64,
-    pub directories_scanned: u64,
-    pub bytes_scanned: u64,
     pub finished: bool,
 }
 
@@ -168,9 +163,8 @@ impl AppModel {
     }
 
     pub fn selected_node(&self) -> Option<&TreeNode> {
-        self.selected
-            .and_then(|id| self.nodes.get(id))
-            .filter(|node| !node.removed)
+        self.selected.filter(|id| self.is_active_node(*id))?;
+        self.selected.and_then(|id| self.nodes.get(id))
     }
 
     pub fn last_scan_duration(&self) -> Option<Duration> {
@@ -181,13 +175,6 @@ impl AppModel {
                 .map(|summary| summary.elapsed)
                 .unwrap_or_else(|| state.started_at.elapsed())
         })
-    }
-
-    pub fn progress(&self) -> ProgressSnapshot {
-        self.scan_state
-            .as_ref()
-            .map(|state| state.progress.clone())
-            .unwrap_or_default()
     }
 
     pub fn apply_event(&mut self, event: ScanEvent) {
@@ -204,6 +191,10 @@ impl AppModel {
     }
 
     pub fn toggle_expanded(&mut self, id: NodeId) {
+        if !self.is_active_node(id) {
+            return;
+        }
+
         if !self
             .nodes
             .get(id)
@@ -218,7 +209,7 @@ impl AppModel {
     }
 
     pub fn select(&mut self, id: NodeId) {
-        if self.nodes.get(id).is_some_and(|node| !node.removed) {
+        if self.is_active_node(id) {
             self.selected = Some(id);
         }
     }
@@ -231,7 +222,37 @@ impl AppModel {
     }
 
     pub fn mark_deleted(&mut self, id: NodeId) {
+        if !self.is_active_node(id) {
+            return;
+        }
+
+        let Some(node) = self.nodes.get(id) else {
+            return;
+        };
+
+        if Some(id) == self.root {
+            self.clear_all();
+            return;
+        }
+
+        let parent_id = node.parent;
+        let removed_size = node.recursive_size;
+        let removed_file_count = node.file_count;
+
         self.mark_removed(id);
+
+        if let Some(parent_id) = parent_id {
+            if let Some(parent) = self.nodes.get_mut(parent_id) {
+                parent.children.retain(|child_id| *child_id != id);
+            }
+            self.propagate_size_delta(Some(parent_id), -(removed_size as i128));
+            self.propagate_file_count_delta(Some(parent_id), -(removed_file_count as i128));
+            self.selected = Some(parent_id);
+        } else {
+            self.selected = None;
+        }
+
+        self.compact_nodes();
     }
 
     pub fn visible_nodes(&self) -> Vec<VisibleNode> {
@@ -427,23 +448,106 @@ impl AppModel {
             self.propagate_size_delta(Some(parent_id), -(removed_size as i128));
             self.propagate_file_count_delta(Some(parent_id), -(removed_file_count as i128));
         }
+
+        self.compact_nodes();
     }
 
     fn mark_removed(&mut self, node_id: NodeId) {
-        if self.nodes.get(node_id).is_none() || self.nodes[node_id].removed {
+        if !self.is_active_node(node_id) {
             return;
         }
 
         let children = self.nodes[node_id].children.clone();
         let path = self.nodes[node_id].path.clone();
-        self.nodes[node_id].removed = true;
+        let parent = self.nodes[node_id].parent;
         self.path_index.remove(&path);
         if self.context_target == Some(node_id) {
             self.context_target = None;
         }
+        if self.selected == Some(node_id) {
+            self.selected = parent;
+        }
 
         for child in children {
             self.mark_removed(child);
+        }
+    }
+
+    fn is_active_node(&self, node_id: NodeId) -> bool {
+        let Some(node) = self.nodes.get(node_id) else {
+            return false;
+        };
+
+        self.path_index.get(&node.path).copied() == Some(node_id)
+    }
+
+    fn compact_nodes(&mut self) {
+        let Some(root_id) = self.root else {
+            self.nodes.clear();
+            self.path_index.clear();
+            self.expanded.clear();
+            self.selected = None;
+            self.context_target = None;
+            return;
+        };
+
+        if !self.is_active_node(root_id) {
+            self.clear_all();
+            return;
+        }
+
+        let mut ordered_ids = Vec::new();
+        let mut old_to_new = vec![None; self.nodes.len()];
+        self.collect_reachable_nodes(root_id, &mut old_to_new, &mut ordered_ids);
+
+        let mut new_nodes = Vec::with_capacity(ordered_ids.len());
+        let mut new_path_index = HashMap::with_capacity(self.path_index.len());
+
+        for old_id in ordered_ids {
+            let mut node = self.nodes[old_id].clone();
+            let new_id = old_to_new[old_id].expect("reachable node id should be remapped");
+            node.id = new_id;
+            node.parent = node.parent.and_then(|parent_id| old_to_new[parent_id]);
+            node.children = node
+                .children
+                .into_iter()
+                .filter_map(|child_id| old_to_new[child_id])
+                .collect();
+            new_path_index.insert(node.path.clone(), new_id);
+            new_nodes.push(node);
+        }
+
+        self.nodes = new_nodes;
+        self.path_index = new_path_index;
+        self.root = old_to_new[root_id];
+        self.expanded = self
+            .expanded
+            .iter()
+            .filter_map(|id| old_to_new.get(*id).and_then(|mapped| *mapped))
+            .collect();
+        self.selected = self
+            .selected
+            .and_then(|id| old_to_new.get(id).and_then(|mapped| *mapped));
+        self.context_target = self
+            .context_target
+            .and_then(|id| old_to_new.get(id).and_then(|mapped| *mapped));
+    }
+
+    fn collect_reachable_nodes(
+        &self,
+        node_id: NodeId,
+        old_to_new: &mut [Option<NodeId>],
+        ordered_ids: &mut Vec<NodeId>,
+    ) {
+        if old_to_new[node_id].is_some() {
+            return;
+        }
+
+        old_to_new[node_id] = Some(ordered_ids.len());
+        ordered_ids.push(node_id);
+
+        for &child_id in &self.nodes[node_id].children {
+            self.collect_reachable_nodes(child_id, old_to_new, ordered_ids);
         }
     }
 
@@ -515,7 +619,6 @@ impl AppModel {
             modified_at,
             children: Vec::new(),
             last_error: error,
-            removed: false,
         });
 
         self.path_index.insert(path, id);
@@ -579,7 +682,6 @@ impl AppModel {
             expanded: self.expanded.contains(&node.id),
             has_children: !node.children.is_empty(),
             has_error: node.last_error.is_some(),
-            removed: node.removed,
             is_scanning: self.is_node_in_active_scan_chain(node),
         });
 

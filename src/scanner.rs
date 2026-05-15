@@ -140,12 +140,82 @@ pub fn spawn_scan(request: ScanRequest) -> ScanHandle {
 }
 
 fn run_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled: Arc<AtomicBool>) {
+    if try_run_file_scan(&request, &sender, &cancelled) {
+        return;
+    }
+
     #[cfg(windows)]
     if windows_find::try_run_scan(&request, &sender, &cancelled) {
         return;
     }
 
     run_standard_scan(request, sender, cancelled);
+}
+
+fn try_run_file_scan(
+    request: &ScanRequest,
+    sender: &Sender<ScanEvent>,
+    cancelled: &Arc<AtomicBool>,
+) -> bool {
+    let metadata = match fs::symlink_metadata(&request.target) {
+        Ok(metadata) => metadata,
+        Err(_) => return false,
+    };
+
+    let file_type = metadata.file_type();
+    if file_type.is_dir() {
+        return false;
+    }
+
+    let _ = sender.send(ScanEvent::Started {
+        request: request.clone(),
+    });
+
+    if cancelled.load(Ordering::Relaxed) {
+        let _ = sender.send(ScanEvent::Cancelled {
+            request: request.clone(),
+        });
+        return true;
+    }
+
+    let start = Instant::now();
+    let kind = if file_type.is_file() {
+        EntryKind::File
+    } else if file_type.is_symlink() {
+        EntryKind::Symlink
+    } else {
+        EntryKind::Other
+    };
+    let size = if file_type.is_file() { metadata.len() } else { 0 };
+    let files_scanned = u64::from(file_type.is_file());
+
+    let _ = sender.send(ScanEvent::Batch(ScanBatch {
+        session_id: request.session_id,
+        entries: vec![DiscoveredEntry {
+            path: request.target.clone(),
+            parent_path: request.target.parent().map(|path| path.to_path_buf()),
+            kind,
+            size,
+            modified_at: metadata.modified().ok(),
+            error: None,
+        }],
+        progress: crate::model::ProgressSnapshot {
+            current_path: Some(request.target.clone()),
+            finished: true,
+        },
+        warnings: Vec::new(),
+    }));
+
+    let _ = sender.send(ScanEvent::Finished {
+        request: request.clone(),
+        summary: ScanSummary {
+            files_scanned,
+            directories_scanned: 0,
+            elapsed: start.elapsed(),
+        },
+    });
+
+    true
 }
 
 fn run_standard_scan(request: ScanRequest, sender: Sender<ScanEvent>, cancelled: Arc<AtomicBool>) {
@@ -332,9 +402,6 @@ fn emit_progress_batch(
         entries: Vec::new(),
         progress: crate::model::ProgressSnapshot {
             current_path: progress.current_path.clone(),
-            files_scanned: progress.files_scanned,
-            directories_scanned: progress.directories_scanned,
-            bytes_scanned: progress.bytes_scanned,
             finished: progress.finished,
         },
         warnings: std::mem::take(warnings),
@@ -359,9 +426,6 @@ fn flush_batch(
         entries,
         progress: crate::model::ProgressSnapshot {
             current_path: progress.current_path.clone(),
-            files_scanned: progress.files_scanned,
-            directories_scanned: progress.directories_scanned,
-            bytes_scanned: progress.bytes_scanned,
             finished: progress.finished,
         },
         warnings: warning_messages,

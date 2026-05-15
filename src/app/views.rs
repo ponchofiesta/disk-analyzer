@@ -214,7 +214,7 @@ impl TableDelegate for ResultsTableDelegate {
                             .flex_1()
                             .child(toggle)
                             .child(Icon::new(icon).with_size(Size::Small).text_color(
-                                if row.removed || row.has_error {
+                                if row.has_error {
                                     _cx.theme().danger
                                 } else {
                                     _cx.theme().primary
@@ -224,12 +224,11 @@ impl TableDelegate for ResultsTableDelegate {
                                 div().flex().flex_col().gap_0p5().min_w_0().child(
                                     div()
                                         .truncate()
-                                        .text_color(if row.removed || row.has_error {
+                                        .text_color(if row.has_error {
                                             _cx.theme().danger
                                         } else {
                                             _cx.theme().foreground
                                         })
-                                        .when(row.removed, |this| this.line_through())
                                         .child(shorten_text(&row.name, 42)),
                                 ),
                             ),
@@ -254,23 +253,13 @@ impl TableDelegate for ResultsTableDelegate {
             1 => div()
                 .size_full()
                 .text_right()
-                .text_color(if row.removed {
-                    _cx.theme().danger
-                } else {
-                    _cx.theme().foreground
-                })
-                .when(row.removed, |this| this.line_through())
+                .text_color(_cx.theme().foreground)
                 .child(format_bytes(row.recursive_size))
                 .into_any_element(),
             2 => div()
                 .size_full()
                 .text_right()
-                .text_color(if row.removed {
-                    _cx.theme().danger
-                } else {
-                    _cx.theme().foreground
-                })
-                .when(row.removed, |this| this.line_through())
+                .text_color(_cx.theme().foreground)
                 .child(row.file_count.to_string())
                 .into_any_element(),
             3 => div()
@@ -283,24 +272,18 @@ impl TableDelegate for ResultsTableDelegate {
                     div()
                         .min_w(px(48.0))
                         .text_right()
-                        .text_color(if row.removed {
-                            _cx.theme().danger
-                        } else {
-                            _cx.theme().muted_foreground
-                        })
-                        .when(row.removed, |this| this.line_through())
+                        .text_color(_cx.theme().muted_foreground)
                         .child(format!("{share_percent:.1}%")),
                 )
                 .into_any_element(),
             4 => div()
                 .size_full()
                 .text_right()
-                .text_color(if row.removed || row.has_error {
+                .text_color(if row.has_error {
                     _cx.theme().danger
                 } else {
                     _cx.theme().muted_foreground
                 })
-                .when(row.removed, |this| this.line_through())
                 .child(format_modified_time(row.modified_at))
                 .into_any_element(),
             _ => div().into_any_element(),
